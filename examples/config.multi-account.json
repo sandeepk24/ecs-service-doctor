@@ -1,0 +1,47 @@
+{
+  "aws": {
+    "region": "us-west-2",
+    "profile": "prod-readonly",
+    "expected_account_id": "987654321098"
+  },
+  "checks": {
+    "include_recent_events": true,
+    "recent_event_limit": 10,
+    "include_target_group_health": true,
+    "include_task_definition": true,
+    "fail_on_unhealthy_targets": true,
+    "warn_on_multiple_active_deployments": true
+  },
+  "clusters": [
+    {
+      "name": "prod-edge-cluster",
+      "services": [
+        {
+          "name": "edge-gateway",
+          "expected_desired_count": 4,
+          "critical": true
+        },
+        {
+          "name": "auth-service",
+          "expected_desired_count": 3,
+          "critical": true
+        }
+      ]
+    },
+    {
+      "name": "prod-internal-cluster",
+      "services": [
+        {
+          "name": "billing-worker",
+          "expected_desired_count": 2,
+          "critical": true
+        },
+        {
+          "name": "report-generator",
+          "expected_desired_count": 1,
+          "critical": false
+        }
+      ]
+    }
+  ]
+}

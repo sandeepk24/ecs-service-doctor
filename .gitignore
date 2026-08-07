@@ -5,5 +5,7 @@ __pycache__/
 venv/
 config.json
 ecs_report.html
+node_modules/
+report-ui/dist/
 *.log
 .DS_Store

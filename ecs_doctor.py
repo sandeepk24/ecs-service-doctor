@@ -23,19 +23,19 @@ Usage:
 """
 
 import argparse
-import html
 import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError, ProfileNotFound
 
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -909,283 +909,28 @@ def print_human_report(report: Dict[str, Any]) -> None:
     print()
 
 
-def esc(value: Any) -> str:
-    if value is None:
-        return ""
-    return html.escape(str(value))
+REPORT_TEMPLATE_PATH = Path(__file__).resolve().parent / "report-ui" / "report.template.html"
+REPORT_JSON_PLACEHOLDER = "__ECS_REPORT_JSON__"
 
 
-def status_css(status: str) -> str:
-    return {"PASS": "pass", "WARN": "warn", "FAIL": "fail"}.get(status, "unknown")
-
-
-def status_label(status: str) -> str:
-    return {
-        STATUS_PASS: "Healthy",
-        STATUS_WARN: "Warning",
-        STATUS_FAIL: "Unhealthy",
-    }.get(status, status)
-
-
-def group_results_by_cluster(results: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for item in results:
-        grouped.setdefault(item["cluster"], []).append(item)
-    return grouped
-
-
-def render_check_rows(item: Dict[str, Any]) -> str:
-    if item.get("error"):
-        return f'<tr><td colspan="2" class="error">{esc(item["error"])}</td></tr>'
-
-    checks = item.get("checks", {})
-    rows = []
-
-    meta = [
-        ("Task definition", item.get("task_definition")),
-        ("Launch type", item.get("launch_type")),
-        ("Platform", item.get("platform_version")),
-    ]
-    for label, value in meta:
-        if value:
-            rows.append(f"<tr><th>{esc(label)}</th><td>{esc(value)}</td></tr>")
-
-    for check_name, check in checks.items():
-        if not isinstance(check, dict):
-            continue
-        if check_name == "recent_events":
-            continue
-        if "status" in check and "message" in check:
-            badge = f'<span class="badge {status_css(check["status"])}">{esc(check["status"])}</span>'
-            rows.append(
-                f"<tr><th>{esc(check_name.replace('_', ' ').title())}</th>"
-                f"<td>{badge} {esc(check['message'])}</td></tr>"
-            )
-        elif check_name == "task_definition":
-            for image in check.get("container_images", []):
-                rows.append(
-                    f"<tr><th>Container</th>"
-                    f"<td>{esc(image['container'])} → {esc(image['image'])}</td></tr>"
-                )
-
-    return "\n".join(rows)
-
-
-def render_events_block(item: Dict[str, Any]) -> str:
-    events = item.get("checks", {}).get("recent_events", {}).get("events", [])
-    if not events:
-        return ""
-
-    items = "".join(f"<li>{esc(event.get('message', ''))}</li>" for event in events[:8])
-    return f"""
-    <div class="events">
-      <h4>Recent events</h4>
-      <ul>{items}</ul>
-    </div>
-    """
-
-
-def render_service_card(item: Dict[str, Any]) -> str:
-    critical = ' <span class="critical">critical</span>' if item.get("critical") else ""
-    return f"""
-    <article class="service-card {status_css(item['status'])}">
-      <header>
-        <h3>{esc(item['service'])}{critical}</h3>
-        <span class="badge {status_css(item['status'])}">{esc(status_label(item['status']))}</span>
-      </header>
-      <table class="checks">
-        <tbody>
-          {render_check_rows(item)}
-        </tbody>
-      </table>
-      {render_events_block(item)}
-    </article>
-    """
+def serialize_report_json(report: Dict[str, Any]) -> str:
+    return json.dumps(report, default=str).replace("<", "\u003c")
 
 
 def render_html_report(report: Dict[str, Any]) -> str:
-    summary = report["summary"]
-    account = report["account_check"]
-    grouped = group_results_by_cluster(report.get("results", []))
-
-    overall = STATUS_PASS
-    if summary.get("failed"):
-        overall = STATUS_FAIL
-    elif summary.get("warnings"):
-        overall = STATUS_WARN
-
-    cluster_sections = []
-    for cluster_name, services in grouped.items():
-        cards = "".join(render_service_card(item) for item in services)
-        cluster_sections.append(
-            f"""
-            <section class="cluster">
-              <h2>{esc(cluster_name)}</h2>
-              <p class="cluster-meta">{len(services)} service(s)</p>
-              <div class="services">{cards}</div>
-            </section>
-            """
+    if not REPORT_TEMPLATE_PATH.is_file():
+        raise RuntimeError(
+            "HTML report template missing. Build it with: "
+            "cd report-ui && npm install && npm run build"
         )
 
-    account_row = ""
-    if account.get("status") == STATUS_FAIL:
-        account_row = f'<p class="account-error">{esc(account["message"])}</p>'
-    else:
-        account_row = f"<p><strong>Account:</strong> {esc(account.get('actual_account_id', 'unknown'))}</p>"
+    template = REPORT_TEMPLATE_PATH.read_text(encoding="utf-8")
+    payload = serialize_report_json(report)
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ECS Service Doctor — {esc(report.get('generated_at', ''))}</title>
-  <style>
-    :root {{
-      --bg: #f4f6f8;
-      --card: #ffffff;
-      --text: #1a1a2e;
-      --muted: #5c6370;
-      --border: #dde2e8;
-      --pass: #0f7b4a;
-      --pass-bg: #e6f4ed;
-      --warn: #9a6700;
-      --warn-bg: #fff8e6;
-      --fail: #b42318;
-      --fail-bg: #fdecea;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-    }}
-    .wrap {{ max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }}
-    header.page {{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-    }}
-    header.page h1 {{ margin: 0 0 0.25rem; font-size: 1.5rem; }}
-    header.page .meta {{ color: var(--muted); margin: 0.25rem 0; }}
-    .overall {{
-      display: inline-block;
-      margin-top: 0.75rem;
-      padding: 0.35rem 0.75rem;
-      border-radius: 999px;
-      font-weight: 600;
-      font-size: 0.9rem;
-    }}
-    .overall.pass {{ background: var(--pass-bg); color: var(--pass); }}
-    .overall.warn {{ background: var(--warn-bg); color: var(--warn); }}
-    .overall.fail {{ background: var(--fail-bg); color: var(--fail); }}
-    .summary {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1.5rem;
-    }}
-    .stat {{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1rem;
-      text-align: center;
-    }}
-    .stat .num {{ font-size: 1.75rem; font-weight: 700; }}
-    .stat .lbl {{ color: var(--muted); font-size: 0.85rem; }}
-    .cluster {{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.25rem;
-      margin-bottom: 1.25rem;
-    }}
-    .cluster h2 {{ margin: 0; font-size: 1.15rem; }}
-    .cluster-meta {{ color: var(--muted); margin: 0.25rem 0 1rem; font-size: 0.9rem; }}
-    .services {{ display: grid; gap: 1rem; }}
-    .service-card {{
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1rem;
-      border-left-width: 4px;
-    }}
-    .service-card.pass {{ border-left-color: var(--pass); }}
-    .service-card.warn {{ border-left-color: var(--warn); }}
-    .service-card.fail {{ border-left-color: var(--fail); }}
-    .service-card header {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.75rem;
-      margin-bottom: 0.75rem;
-    }}
-    .service-card h3 {{ margin: 0; font-size: 1rem; }}
-    .badge {{
-      display: inline-block;
-      padding: 0.15rem 0.5rem;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      white-space: nowrap;
-    }}
-    .badge.pass {{ background: var(--pass-bg); color: var(--pass); }}
-    .badge.warn {{ background: var(--warn-bg); color: var(--warn); }}
-    .badge.fail {{ background: var(--fail-bg); color: var(--fail); }}
-    .critical {{
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      color: var(--fail);
-      margin-left: 0.35rem;
-    }}
-    table.checks {{
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }}
-    table.checks th {{
-      text-align: left;
-      width: 140px;
-      padding: 0.35rem 0.75rem 0.35rem 0;
-      color: var(--muted);
-      font-weight: 500;
-      vertical-align: top;
-    }}
-    table.checks td {{ padding: 0.35rem 0; vertical-align: top; }}
-    .events {{ margin-top: 0.75rem; }}
-    .events h4 {{ margin: 0 0 0.35rem; font-size: 0.85rem; color: var(--muted); }}
-    .events ul {{ margin: 0; padding-left: 1.25rem; font-size: 0.85rem; }}
-    .events li {{ margin-bottom: 0.25rem; }}
-    .account-error {{ color: var(--fail); font-weight: 600; }}
-    footer {{ text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 1.5rem; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header class="page">
-      <h1>ECS Service Doctor</h1>
-      <p class="meta">Generated {esc(report.get('generated_at'))} · Region {esc(report.get('region'))}</p>
-      {account_row}
-      <span class="overall {status_css(overall)}">{esc(status_label(overall))}</span>
-    </header>
+    if REPORT_JSON_PLACEHOLDER not in template:
+        raise RuntimeError("HTML template is missing the report data placeholder.")
 
-    <div class="summary">
-      <div class="stat"><div class="num">{summary.get('total_services', 0)}</div><div class="lbl">Services</div></div>
-      <div class="stat"><div class="num">{summary.get('passed', 0)}</div><div class="lbl">Healthy</div></div>
-      <div class="stat"><div class="num">{summary.get('warnings', 0)}</div><div class="lbl">Warnings</div></div>
-      <div class="stat"><div class="num">{summary.get('failed', 0)}</div><div class="lbl">Failed</div></div>
-    </div>
-
-    {"".join(cluster_sections) if cluster_sections else "<p>No services were checked.</p>"}
-
-    <footer>ecs-service-doctor v{esc(report.get('version', VERSION))}</footer>
-  </div>
-</body>
-</html>
-"""
+    return template.replace(REPORT_JSON_PLACEHOLDER, payload, 1)
 
 
 def build_sample_report() -> Dict[str, Any]:

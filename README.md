@@ -146,6 +146,8 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 
 ![ECS Service Doctor HTML report sample](examples/ecs_report.sample.png)
 
+Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
+
 The report includes:
 
 - Overall health summary
@@ -158,13 +160,16 @@ The report includes:
 To regenerate the sample after template changes:
 
 ```bash
+cd report-ui && npm install && npm run build
 python examples/generate_sample_html.py
 # Optional: refresh README screenshot (macOS + Chrome)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless=new --disable-gpu --hide-scrollbars \
-  --screenshot=examples/ecs_report.sample.png --window-size=960,2200 \
+  --screenshot=examples/ecs_report.sample.png --window-size=1080,2400 \
   "file://$(pwd)/examples/ecs_report.sample.html"
 ```
+
+The HTML report is built with **React + Vite** (`report-ui/`). Customize colors, fonts, and layout there, then run `npm run build` to update the template.
 
 ---
 

@@ -49,7 +49,7 @@ python ecs_doctor.py --config config.json
 python ecs_doctor.py -c my-cluster -s my-api --json
 
 # HTML report — shareable page grouped by cluster
-python ecs_doctor.py -c my-cluster --all-services --html report.html
+python ecs_doctor.py -c my-cluster --all-services --html
 ```
 
 **Optional flags**
@@ -60,7 +60,7 @@ python ecs_doctor.py -c my-cluster --all-services --html report.html
 | `--profile my-profile` | AWS CLI profile |
 | `--account 123456789012` | Refuse to run in the wrong account |
 | `--verbose` | Detailed technical output |
-| `--html report.html` | Write a shareable HTML report |
+| `--html [FILE]` | Write HTML report (default: `ecs_report.html`) |
 | `--json` | Machine-readable output for pipelines |
 
 ---
@@ -135,7 +135,13 @@ Result: 1/2 services healthy — problems found
 Generate a self-contained HTML page you can open in a browser or attach to a release approval:
 
 ```bash
-python ecs_doctor.py -c my-cluster -s my-api --html report.html
+python ecs_doctor.py -c my-cluster -s my-api --html
+```
+
+This writes `ecs_report.html` in the current directory. Pass a custom path if you prefer:
+
+```bash
+python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 ```
 
 The report includes:

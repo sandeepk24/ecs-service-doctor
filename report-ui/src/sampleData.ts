@@ -3,7 +3,7 @@ import type { EcsReport } from "./types";
 export const sampleReport: EcsReport = {
   tool: "ecs-service-doctor",
   version: "0.4.0",
-  generated_at: "2026-08-07T20:00:00+00:00",
+  generated_at: "2026-08-07T20:53:00+00:00",
   region: "us-east-1",
   account_check: {
     status: "PASS",

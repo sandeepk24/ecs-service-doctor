@@ -80,8 +80,18 @@ Use a config file when you check many services regularly or need advanced option
 ```json
 {
   "cluster": "dev-apps-cluster",
-  "services": ["orders-api", "payments-api"]
+  "services": ["orders-api", "payments-api"],
+  "region": "us-east-1",
+  "expected_account_id": "123456789012"
 }
+```
+
+`region` and `expected_account_id` are optional. If you omit `expected_account_id`, the tool still runs and shows which account you're connected to. Set it when you want a safety guard (e.g. refuse to run if you're accidentally pointed at prod).
+
+You can also pass account on the CLI without a config file:
+
+```bash
+python ecs_doctor.py -c my-cluster -s my-api --account 123456789012
 ```
 
 **Advanced config** — multiple clusters, expected task counts, account safety:

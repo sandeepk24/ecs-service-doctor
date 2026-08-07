@@ -1,42 +1,4 @@
 {
-  "aws": {
-    "region": "us-east-1",
-    "profile": "default",
-    "expected_account_id": "123456789012"
-  },
-  "checks": {
-    "include_recent_events": true,
-    "recent_event_limit": 8,
-    "include_target_group_health": true,
-    "include_task_definition": true,
-    "fail_on_unhealthy_targets": true,
-    "warn_on_multiple_active_deployments": true
-  },
-  "clusters": [
-    {
-      "name": "dev-apps-cluster",
-      "services": [
-        {
-          "name": "orders-api",
-          "expected_desired_count": 2,
-          "critical": true
-        },
-        {
-          "name": "payments-api",
-          "expected_desired_count": 2,
-          "critical": true
-        }
-      ]
-    },
-    {
-      "name": "ai-agents-cluster",
-      "services": [
-        {
-          "name": "agents-service",
-          "expected_desired_count": 1,
-          "critical": false
-        }
-      ]
-    }
-  ]
+  "cluster": "dev-apps-cluster",
+  "services": ["orders-api", "payments-api"]
 }

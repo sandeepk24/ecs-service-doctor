@@ -36,7 +36,6 @@ from botocore.exceptions import ClientError, ProfileNotFound
 
 
 VERSION = "0.4.0"
-DEFAULT_HTML_REPORT = "ecs_report.html"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1254,10 +1253,9 @@ With a config file:
     parser.add_argument(
         "--html",
         nargs="?",
-        const=DEFAULT_HTML_REPORT,
+        const="ecs_report.html",
         metavar="FILE",
-        default=None,
-        help=f"Write a shareable HTML report (default: {DEFAULT_HTML_REPORT})",
+        help="Write HTML report (default: ecs_report.html)",
     )
 
     parser.add_argument(

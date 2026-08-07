@@ -138,7 +138,7 @@ Generate a self-contained HTML page you can open in a browser or attach to a rel
 python ecs_doctor.py -c my-cluster -s my-api --html
 ```
 
-This writes `ecs_report.html` in the current directory. Pass a custom path if you prefer:
+Or specify a custom path:
 
 ```bash
 python ecs_doctor.py -c my-cluster -s my-api --html my-report.html

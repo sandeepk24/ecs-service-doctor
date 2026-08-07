@@ -4,7 +4,6 @@ __pycache__/
 .venv/
 venv/
 config.json
-report.html
 ecs_report.html
 *.log
 .DS_Store

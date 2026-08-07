@@ -4,5 +4,6 @@ __pycache__/
 .venv/
 venv/
 config.json
+report.html
 *.log
 .DS_Store

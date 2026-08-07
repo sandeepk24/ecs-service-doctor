@@ -1,4 +1,6 @@
 {
   "cluster": "dev-apps-cluster",
-  "services": ["orders-api", "payments-api"]
+  "services": ["orders-api", "payments-api"],
+  "region": "us-east-1",
+  "expected_account_id": "123456789012"
 }

@@ -151,6 +151,14 @@ The report includes:
 - Task counts, deployment status, load balancer health
 - Container images and recent ECS events
 
+**Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser to see what a report looks like (sample data, no AWS credentials needed).
+
+To regenerate the sample after template changes:
+
+```bash
+python examples/generate_sample_html.py
+```
+
 ---
 
 ## IAM permissions

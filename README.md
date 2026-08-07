@@ -47,6 +47,9 @@ python ecs_doctor.py --config config.json
 
 # CI/CD — exit code 0 = healthy, 1 = warnings, 2 = failures
 python ecs_doctor.py -c my-cluster -s my-api --json
+
+# HTML report — shareable page grouped by cluster
+python ecs_doctor.py -c my-cluster --all-services --html report.html
 ```
 
 **Optional flags**
@@ -57,6 +60,7 @@ python ecs_doctor.py -c my-cluster -s my-api --json
 | `--profile my-profile` | AWS CLI profile |
 | `--account 123456789012` | Refuse to run in the wrong account |
 | `--verbose` | Detailed technical output |
+| `--html report.html` | Write a shareable HTML report |
 | `--json` | Machine-readable output for pipelines |
 
 ---
@@ -123,6 +127,23 @@ Account: 123456789012
 ==================================================
 Result: 1/2 services healthy — problems found
 ```
+
+---
+
+## HTML report
+
+Generate a self-contained HTML page you can open in a browser or attach to a release approval:
+
+```bash
+python ecs_doctor.py -c my-cluster -s my-api --html report.html
+```
+
+The report includes:
+
+- Overall health summary
+- Services grouped by cluster
+- Task counts, deployment status, load balancer health
+- Container images and recent ECS events
 
 ---
 

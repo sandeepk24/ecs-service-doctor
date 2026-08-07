@@ -144,6 +144,8 @@ Or specify a custom path:
 python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 ```
 
+![ECS Service Doctor HTML report sample](examples/ecs_report.sample.png)
+
 The report includes:
 
 - Overall health summary
@@ -151,12 +153,17 @@ The report includes:
 - Task counts, deployment status, load balancer health
 - Container images and recent ECS events
 
-**Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser to see what a report looks like (sample data, no AWS credentials needed).
+**Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 
 To regenerate the sample after template changes:
 
 ```bash
 python examples/generate_sample_html.py
+# Optional: refresh README screenshot (macOS + Chrome)
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --hide-scrollbars \
+  --screenshot=examples/ecs_report.sample.png --window-size=960,2200 \
+  "file://$(pwd)/examples/ecs_report.sample.html"
 ```
 
 ---

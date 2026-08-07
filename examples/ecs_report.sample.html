@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECS Service Doctor — 2026-08-07T20:00:00+00:00</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --text: #1a1a2e;
+      --muted: #5c6370;
+      --border: #dde2e8;
+      --pass: #0f7b4a;
+      --pass-bg: #e6f4ed;
+      --warn: #9a6700;
+      --warn-bg: #fff8e6;
+      --fail: #b42318;
+      --fail-bg: #fdecea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    header.page {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    header.page h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+    header.page .meta { color: var(--muted); margin: 0.25rem 0; }
+    .overall {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .overall.pass { background: var(--pass-bg); color: var(--pass); }
+    .overall.warn { background: var(--warn-bg); color: var(--warn); }
+    .overall.fail { background: var(--fail-bg); color: var(--fail); }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat .num { font-size: 1.75rem; font-weight: 700; }
+    .stat .lbl { color: var(--muted); font-size: 0.85rem; }
+    .cluster {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .cluster h2 { margin: 0; font-size: 1.15rem; }
+    .cluster-meta { color: var(--muted); margin: 0.25rem 0 1rem; font-size: 0.9rem; }
+    .services { display: grid; gap: 1rem; }
+    .service-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      border-left-width: 4px;
+    }
+    .service-card.pass { border-left-color: var(--pass); }
+    .service-card.warn { border-left-color: var(--warn); }
+    .service-card.fail { border-left-color: var(--fail); }
+    .service-card header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .service-card h3 { margin: 0; font-size: 1rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge.pass { background: var(--pass-bg); color: var(--pass); }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .badge.fail { background: var(--fail-bg); color: var(--fail); }
+    .critical {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: var(--fail);
+      margin-left: 0.35rem;
+    }
+    table.checks {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    table.checks th {
+      text-align: left;
+      width: 140px;
+      padding: 0.35rem 0.75rem 0.35rem 0;
+      color: var(--muted);
+      font-weight: 500;
+      vertical-align: top;
+    }
+    table.checks td { padding: 0.35rem 0; vertical-align: top; }
+    .events { margin-top: 0.75rem; }
+    .events h4 { margin: 0 0 0.35rem; font-size: 0.85rem; color: var(--muted); }
+    .events ul { margin: 0; padding-left: 1.25rem; font-size: 0.85rem; }
+    .events li { margin-bottom: 0.25rem; }
+    .account-error { color: var(--fail); font-weight: 600; }
+    footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="page">
+      <h1>ECS Service Doctor</h1>
+      <p class="meta">Generated 2026-08-07T20:00:00+00:00 · Region us-east-1</p>
+      <p><strong>Account:</strong> 123456789012</p>
+      <span class="overall fail">Unhealthy</span>
+    </header>
+
+    <div class="summary">
+      <div class="stat"><div class="num">3</div><div class="lbl">Services</div></div>
+      <div class="stat"><div class="num">1</div><div class="lbl">Healthy</div></div>
+      <div class="stat"><div class="num">1</div><div class="lbl">Warnings</div></div>
+      <div class="stat"><div class="num">1</div><div class="lbl">Failed</div></div>
+    </div>
+
+    
+            <section class="cluster">
+              <h2>dev-apps-cluster</h2>
+              <p class="cluster-meta">3 service(s)</p>
+              <div class="services">
+    <article class="service-card pass">
+      <header>
+        <h3>orders-api <span class="critical">critical</span></h3>
+        <span class="badge pass">Healthy</span>
+      </header>
+      <table class="checks">
+        <tbody>
+          <tr><th>Task definition</th><td>arn:aws:ecs:us-east-1:123456789012:task-definition/orders-api:42</td></tr>
+<tr><th>Launch type</th><td>FARGATE</td></tr>
+<tr><th>Platform</th><td>LATEST</td></tr>
+<tr><th>Task Counts</th><td><span class="badge pass">PASS</span> Task counts look stable: desired=2, running=2, pending=0</td></tr>
+<tr><th>Deployments</th><td><span class="badge pass">PASS</span> Deployment state looks stable</td></tr>
+<tr><th>Target Group Health</th><td><span class="badge pass">PASS</span> Target group health looks good: healthy=2, unhealthy=0</td></tr>
+<tr><th>Container</th><td>orders-api → 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3</td></tr>
+        </tbody>
+      </table>
+      
+    <div class="events">
+      <h4>Recent events</h4>
+      <ul><li>(service orders-api) has reached a steady state.</li></ul>
+    </div>
+    
+    </article>
+    
+    <article class="service-card warn">
+      <header>
+        <h3>agents-service</h3>
+        <span class="badge warn">Warning</span>
+      </header>
+      <table class="checks">
+        <tbody>
+          <tr><th>Task definition</th><td>arn:aws:ecs:us-east-1:123456789012:task-definition/agents-service:8</td></tr>
+<tr><th>Launch type</th><td>FARGATE</td></tr>
+<tr><th>Platform</th><td>LATEST</td></tr>
+<tr><th>Task Counts</th><td><span class="badge pass">PASS</span> Task counts look stable: desired=1, running=1, pending=0</td></tr>
+<tr><th>Deployments</th><td><span class="badge warn">WARN</span> Multiple active deployments detected: 2</td></tr>
+<tr><th>Target Group Health</th><td><span class="badge warn">WARN</span> Targets still registering during deployment: initial=1</td></tr>
+<tr><th>Container</th><td>agents-service → 123456789012.dkr.ecr.us-east-1.amazonaws.com/agents-service:v0.9.0</td></tr>
+        </tbody>
+      </table>
+      
+    <div class="events">
+      <h4>Recent events</h4>
+      <ul><li>(service agents-service) registered 1 targets in target-group tg-agents</li></ul>
+    </div>
+    
+    </article>
+    
+    <article class="service-card fail">
+      <header>
+        <h3>payments-api <span class="critical">critical</span></h3>
+        <span class="badge fail">Unhealthy</span>
+      </header>
+      <table class="checks">
+        <tbody>
+          <tr><th>Task definition</th><td>arn:aws:ecs:us-east-1:123456789012:task-definition/payments-api:17</td></tr>
+<tr><th>Launch type</th><td>FARGATE</td></tr>
+<tr><th>Platform</th><td>LATEST</td></tr>
+<tr><th>Task Counts</th><td><span class="badge fail">FAIL</span> Running count is below desired count: running=1, desired=2</td></tr>
+<tr><th>Deployments</th><td><span class="badge fail">FAIL</span> Primary deployment rollout state is IN_PROGRESS</td></tr>
+<tr><th>Target Group Health</th><td><span class="badge fail">FAIL</span> Unhealthy targets detected: 1</td></tr>
+<tr><th>Container</th><td>payments-api → 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v2.0.1</td></tr>
+        </tbody>
+      </table>
+      
+    <div class="events">
+      <h4>Recent events</h4>
+      <ul><li>(service payments-api) was unable to place a task. Reason: ResourceInitializationError.</li><li>(service payments-api) (task abc123) (port 8080) is unhealthy in target-group tg-payments due to Health checks failed.</li></ul>
+    </div>
+    
+    </article>
+    </div>
+            </section>
+            
+
+    <footer>ecs-service-doctor v0.4.0</footer>
+  </div>
+</body>
+</html>

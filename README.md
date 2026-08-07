@@ -157,19 +157,14 @@ The report includes:
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 
-To regenerate the sample after template changes:
+To regenerate the sample HTML and README screenshot:
 
 ```bash
-cd report-ui && npm install && npm run build
+cd report-ui && npm install && npm run build && cd ..
 python examples/generate_sample_html.py
-# Optional: refresh README screenshot (macOS + Chrome)
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new --disable-gpu --hide-scrollbars \
-  --screenshot=examples/ecs_report.sample.png --window-size=1080,2400 \
-  "file://$(pwd)/examples/ecs_report.sample.html"
 ```
 
-The HTML report is built with **React + Vite** (`report-ui/`). Customize colors, fonts, and layout there, then run `npm run build` to update the template.
+Requires Playwright for the screenshot step (`cd report-ui && npx playwright install chromium` once).
 
 ---
 

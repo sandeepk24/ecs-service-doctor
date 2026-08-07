@@ -938,7 +938,7 @@ def build_sample_report() -> Dict[str, Any]:
     return {
         "tool": "ecs-service-doctor",
         "version": VERSION,
-        "generated_at": "2026-08-07T20:00:00+00:00",
+        "generated_at": "2026-08-07T20:53:00+00:00",
         "region": "us-east-1",
         "account_check": {
             "status": STATUS_PASS,

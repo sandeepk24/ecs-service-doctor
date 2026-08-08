@@ -1,8 +1,27 @@
 # ecs-service-doctor
 
-**Is your ECS service actually healthy, or did ECS just say it is?**
+**Is your application on ECS actually healthy, or did the control plane just say it is?**
 
-This tool checks the things that matter after a deploy: running tasks, deployment status, load balancer health, and recent errors. No config file required.
+ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
+
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, rollout state, target group attachment, load balancer health, recent ECS events, container images, and the connectivity path your app depends on.
+
+---
+
+## Why applications on ECS?
+
+Many teams run production apps on ECS because it integrates cleanly with the rest of AWS — especially **AI and accelerator workloads** that call **Amazon Bedrock**, store state in **RDS** or **DynamoDB**, pull images from **ECR**, and sit behind **ALB/NLB** with **Route 53** DNS. ECS gives you container orchestration without managing Kubernetes, and it fits naturally into VPC, IAM, and Secrets Manager patterns.
+
+That stack is powerful, but **application health is harder to see than ECS task health**. A service can show `running=2` while:
+
+- Bedrock or database calls fail because env vars, secrets, or security groups are wrong
+- The load balancer routes traffic to tasks that fail HTTP health checks
+- A rolling deploy leaves two active revisions and half your traffic on a bad build
+- Target groups are misconfigured (wrong container port, no registered targets)
+
+ecs-service-doctor answers the question operators and on-call engineers actually care about: **can real traffic reach this app, and is the running task the one we intended to deploy?**
+
+No config file required for a single check.
 
 ---
 
@@ -67,12 +86,19 @@ python ecs_doctor.py -c my-cluster --all-services --html
 
 ## What it checks
 
-- Tasks running vs desired count
-- Deployment finished or still rolling out
-- Target group detection, attachment validation, and target health
-- Container image currently deployed
-- Recent ECS error messages
-- Connectivity path (Route 53, ALB/NLB, target groups, databases inferred from env vars, ECR)
+Application and infrastructure signals together:
+
+| Area | What you learn |
+|------|----------------|
+| **Tasks** | Running vs desired count — is the app scaled correctly? |
+| **Deployments** | Rollout finished or stuck with multiple active revisions |
+| **Load balancers** | Target groups detected, attached to ALB/NLB, container port matches task definition |
+| **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
+| **Container image** | Which image/tag is actually deployed (from the task definition) |
+| **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
+| **Connectivity** | Rough path diagram: Route 53 → ALB/NLB → target group → ECS → inferred backends (RDS, DynamoDB, ElastiCache, etc. from env/secrets) → ECR |
+
+This is **read-only** — it inspects your services and produces a CLI summary, JSON for CI/CD, or a shareable HTML **Service Health Report**.
 
 ---
 
@@ -116,8 +142,10 @@ Account: 123456789012
 [HEALTHY] dev-apps-cluster / orders-api
   Tasks: 2/2 running
   Deployment: finished
-  Load balancer: Target group health looks good: healthy=2, unhealthy=0
+  Load balancer: Target groups attached correctly: healthy=2, unhealthy=0
+  Target groups: 1 target group(s): tg-orders — attachments look correct
   Image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
+  Connectivity: Route 53 → Load Balancer → Target Group → ECS → backend(s) → ECR
 
 [UNHEALTHY] dev-apps-cluster / payments-api
   Tasks: 1/2 running — Running count is below desired count: running=1, desired=2
@@ -133,7 +161,7 @@ Result: 1/2 services healthy — problems found
 
 ## HTML report
 
-Generate a self-contained HTML page you can open in a browser or attach to a release approval:
+Generate a self-contained **ECS Service Health Report** you can open in a browser, attach to a release ticket, or share with your team:
 
 ```bash
 python ecs_doctor.py -c my-cluster -s my-api --html
@@ -145,17 +173,17 @@ Or specify a custom path:
 python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 ```
 
-![ECS Service Doctor HTML report sample](examples/ecs_report.sample.png)
+![ECS Service Health Report sample](examples/ecs_report.sample.png)
 
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
 
 The report includes:
 
-- Overall health summary
-- Services grouped by cluster
-- Task counts, deployment status, load balancer health
+- Overall health summary across clusters
+- Services grouped by cluster with pass/warn/fail status
+- Task counts, deployment status, and per–target-group attachment details
 - Container images and recent ECS events
-- Auto-detected connectivity diagram (Route 53, ALB/NLB, Cloud Map, inferred backends, ECR)
+- Auto-detected connectivity diagram (Route 53, ALB/NLB, target groups, Cloud Map, inferred DB/cache backends, ECR)
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 

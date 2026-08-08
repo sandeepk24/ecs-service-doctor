@@ -72,6 +72,7 @@ python ecs_doctor.py -c my-cluster --all-services --html
 - Load balancer target health
 - Container image currently deployed
 - Recent ECS error messages
+- Connectivity path (Route 53, ALB/NLB, databases inferred from env vars, ECR)
 
 ---
 
@@ -154,6 +155,7 @@ The report includes:
 - Services grouped by cluster
 - Task counts, deployment status, load balancer health
 - Container images and recent ECS events
+- Auto-detected connectivity diagram (Route 53, ALB/NLB, Cloud Map, inferred backends, ECR)
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 
@@ -175,7 +177,12 @@ Read-only access only:
 - `ecs:ListServices`
 - `ecs:DescribeServices`
 - `ecs:DescribeTaskDefinition`
+- `elasticloadbalancing:DescribeLoadBalancers`
+- `elasticloadbalancing:DescribeTargetGroups`
 - `elasticloadbalancing:DescribeTargetHealth`
+- `route53:ListHostedZones`
+- `route53:ListResourceRecordSets`
+- `servicediscovery:GetService`
 - `sts:GetCallerIdentity`
 
 ---

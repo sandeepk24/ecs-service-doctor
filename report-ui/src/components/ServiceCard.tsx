@@ -1,6 +1,7 @@
-import type { ServiceResult } from "../types";
+import type { ServiceResult, Topology } from "../types";
 import { statusLabel } from "../utils";
 import { StatusBadge } from "./StatusBadge";
+import { TopologyDiagram } from "./TopologyDiagram";
 
 interface Props {
   item: ServiceResult;
@@ -31,6 +32,7 @@ export function ServiceCard({ item }: Props) {
   const checks = item.checks ?? {};
   const events = checks.recent_events?.events ?? [];
   const images = checks.task_definition?.container_images ?? [];
+  const connectivity = checks.connectivity as Topology | undefined;
 
   return (
     <article className={`service-card ${item.status.toLowerCase()}`}>
@@ -84,6 +86,10 @@ export function ServiceCard({ item }: Props) {
               message={checks.target_group_health?.message}
             />
           </div>
+
+          {connectivity?.nodes?.length ? (
+            <TopologyDiagram topology={connectivity} />
+          ) : null}
 
           {images.length > 0 && (
             <div className="images">

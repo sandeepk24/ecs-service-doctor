@@ -34,8 +34,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import boto3
 from botocore.exceptions import ClientError, ProfileNotFound
 
+from topology import build_route53_index, discover_connectivity
 
-VERSION = "0.5.0"
+
+VERSION = "0.6.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -556,12 +558,14 @@ def aggregate_check_status(checks: Dict[str, Any]) -> str:
 def inspect_service(
     ecs_client,
     elbv2_client,
+    sd_client,
     cluster_name: str,
     service_config: Dict[str, Any],
     checks_config: Dict[str, Any],
     prefetched_service: Optional[Dict[str, Any]] = None,
     prefetch_error: Optional[str] = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    route53_index: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
     service_name = service_config["name"]
     expected_desired_count = service_config.get("expected_desired_count")
@@ -611,10 +615,18 @@ def inspect_service(
                 "events": extract_recent_events(service, limit),
             }
 
-        if checks_config.get("include_task_definition", True):
+        task_definition: Optional[Dict[str, Any]] = None
+        container_images: List[Dict[str, str]] = []
+
+        if checks_config.get("include_task_definition", True) or checks_config.get(
+            "include_connectivity_diagram", True
+        ):
             task_definition = describe_task_definition(
                 ecs_client, service["taskDefinition"]
             )
+            container_images = get_container_images(task_definition)
+
+        if checks_config.get("include_task_definition", True) and task_definition:
             result["checks"]["task_definition"] = {
                 "status": STATUS_PASS,
                 "family": task_definition.get("family"),
@@ -625,7 +637,7 @@ def inspect_service(
                 "requires_compatibilities": task_definition.get(
                     "requiresCompatibilities"
                 ),
-                "container_images": get_container_images(task_definition),
+                "container_images": container_images,
             }
 
         if checks_config.get("include_target_group_health", True):
@@ -636,7 +648,25 @@ def inspect_service(
                 max_workers,
             )
 
-        result["status"] = aggregate_check_status(result["checks"])
+        if checks_config.get("include_connectivity_diagram", True):
+            result["checks"]["connectivity"] = discover_connectivity(
+                elbv2_client=elbv2_client,
+                sd_client=sd_client,
+                service=service,
+                task_definition=task_definition,
+                container_images=container_images,
+                service_name=service_name,
+                cluster_name=cluster_name,
+                route53_index=route53_index or {},
+            )
+
+        result["status"] = aggregate_check_status(
+            {
+                key: value
+                for key, value in result["checks"].items()
+                if key != "connectivity"
+            }
+        )
 
     except Exception as exc:
         result["status"] = STATUS_FAIL
@@ -663,10 +693,18 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
     session = create_session(config)
     ecs_client = session.client("ecs")
     elbv2_client = session.client("elbv2")
+    sd_client = session.client("servicediscovery")
 
     aws_config = config.get("aws", {})
     checks_config = config.get("checks", {})
     max_workers = aws_config.get("max_workers", DEFAULT_MAX_WORKERS)
+
+    route53_index: Dict[str, List[str]] = {}
+    if checks_config.get("include_connectivity_diagram", True):
+        try:
+            route53_index = build_route53_index(session.client("route53"))
+        except ClientError:
+            route53_index = {}
 
     report: Dict[str, Any] = {
         "tool": "ecs-service-doctor",
@@ -727,12 +765,14 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
                 inspect_service,
                 ecs_client,
                 elbv2_client,
+                sd_client,
                 cluster_name,
                 service_config,
                 checks_config,
                 prefetched_service,
                 prefetch_error,
                 max_workers,
+                route53_index,
             )
             for cluster_name, service_config, prefetched_service, prefetch_error in work_items
         ]
@@ -796,6 +836,10 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
     if images:
         primary = images[0]
         lines.append(f"  Image: {primary['image']}")
+
+    connectivity = checks.get("connectivity", {})
+    if connectivity.get("summary"):
+        lines.append(f"  Connectivity: {connectivity['summary']}")
 
     if item.get("status") != STATUS_PASS:
         events = checks.get("recent_events", {}).get("events", [])
@@ -996,6 +1040,25 @@ def build_sample_report() -> Dict[str, Any]:
                             }
                         ],
                     },
+                    "connectivity": {
+                        "status": STATUS_PASS,
+                        "summary": "Route 53 → Load Balancer → ECS → backend(s) → ECR",
+                        "entrypoint": "r53_api_example_com",
+                        "nodes": [
+                            {"id": "r53_api_example_com", "type": "route53", "label": "api.example.com", "detail": "DNS record"},
+                            {"id": "alb_dev_apps", "type": "alb", "label": "dev-apps-alb", "detail": "APPLICATION · internet-facing"},
+                            {"id": "ecs_orders_api", "type": "ecs_service", "label": "orders-api", "detail": "dev-apps-cluster"},
+                            {"id": "rds_orders_db", "type": "rds", "label": "RDS: orders-db", "detail": "inferred backend"},
+                            {"id": "ecr_orders_api", "type": "ecr", "label": "orders-api", "detail": "container image"},
+                        ],
+                        "edges": [
+                            {"from": "r53_api_example_com", "to": "alb_dev_apps", "label": "alias"},
+                            {"from": "alb_dev_apps", "to": "ecs_orders_api", "label": "routes traffic"},
+                            {"from": "ecs_orders_api", "to": "rds_orders_db", "label": "connects"},
+                            {"from": "ecr_orders_api", "to": "ecs_orders_api", "label": "pulls image"},
+                        ],
+                        "notes": [],
+                    },
                 },
             },
             {
@@ -1039,6 +1102,21 @@ def build_sample_report() -> Dict[str, Any]:
                                 "message": "(service agents-service) registered 1 targets in target-group tg-agents",
                             }
                         ],
+                    },
+                    "connectivity": {
+                        "status": STATUS_PASS,
+                        "summary": "Load Balancer → ECS → ECR",
+                        "entrypoint": "alb_dev_internal",
+                        "nodes": [
+                            {"id": "alb_dev_internal", "type": "alb", "label": "dev-internal-alb", "detail": "APPLICATION · internal"},
+                            {"id": "ecs_agents_service", "type": "ecs_service", "label": "agents-service", "detail": "dev-apps-cluster"},
+                            {"id": "ecr_agents_service", "type": "ecr", "label": "agents-service", "detail": "container image"},
+                        ],
+                        "edges": [
+                            {"from": "alb_dev_internal", "to": "ecs_agents_service", "label": "routes traffic"},
+                            {"from": "ecr_agents_service", "to": "ecs_agents_service", "label": "pulls image"},
+                        ],
+                        "notes": [],
                     },
                 },
             },
@@ -1087,6 +1165,25 @@ def build_sample_report() -> Dict[str, Any]:
                                 "message": "(service payments-api) (task abc123) (port 8080) is unhealthy in target-group tg-payments due to Health checks failed.",
                             },
                         ],
+                    },
+                    "connectivity": {
+                        "status": STATUS_PASS,
+                        "summary": "Internet → Load Balancer → ECS → backend(s) → ECR",
+                        "entrypoint": "internet_payments_api",
+                        "nodes": [
+                            {"id": "internet_payments_api", "type": "internet", "label": "Internet", "detail": "public load balancer"},
+                            {"id": "alb_payments", "type": "alb", "label": "payments-alb", "detail": "APPLICATION · internet-facing"},
+                            {"id": "ecs_payments_api", "type": "ecs_service", "label": "payments-api", "detail": "dev-apps-cluster"},
+                            {"id": "rds_payments_db", "type": "rds", "label": "RDS: payments-db", "detail": "inferred backend"},
+                            {"id": "ecr_payments_api", "type": "ecr", "label": "payments-api", "detail": "container image"},
+                        ],
+                        "edges": [
+                            {"from": "internet_payments_api", "to": "alb_payments", "label": "HTTPS/HTTP"},
+                            {"from": "alb_payments", "to": "ecs_payments_api", "label": "routes traffic"},
+                            {"from": "ecs_payments_api", "to": "rds_payments_db", "label": "connects"},
+                            {"from": "ecr_payments_api", "to": "ecs_payments_api", "label": "pulls image"},
+                        ],
+                        "notes": [],
                     },
                 },
             },

@@ -5,6 +5,12 @@ export interface ReportCheck {
   message?: string;
   events?: Array<{ created_at?: string; message?: string }>;
   container_images?: Array<{ container: string; image: string }>;
+  summary?: string;
+  nodes?: Array<{ id: string; type: string; label: string; detail?: string }>;
+  edges?: Array<{ from: string; to: string; label?: string }>;
+  notes?: string[];
+  mermaid?: string;
+  entrypoint?: string;
   [key: string]: unknown;
 }
 

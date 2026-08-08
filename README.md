@@ -96,6 +96,7 @@ Application and infrastructure signals together:
 | **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
 | **Container image** | Which image/tag is actually deployed (from the task definition) |
 | **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
+| **Stable tasks** | Last 3 task definitions that ran stably — with image tag and a copy-paste rollback command |
 | **Connectivity** | Rough path diagram: Route 53 → ALB/NLB → target group → ECS → inferred backends (RDS, DynamoDB, ElastiCache, etc. from env/secrets) → ECR |
 
 This is **read-only** — it inspects your services and produces a CLI summary, JSON for CI/CD, or a shareable HTML **Service Health Report**.
@@ -182,6 +183,7 @@ The report includes:
 - Overall health summary across clusters
 - Services grouped by cluster with pass/warn/fail status
 - Task counts, deployment status, and per–target-group attachment details
+- Last 3 stable task definitions per service with rollback commands
 - Container images and recent ECS events
 - Auto-detected connectivity diagram (Route 53, ALB/NLB, target groups, Cloud Map, inferred DB/cache backends, ECR)
 
@@ -205,6 +207,8 @@ Read-only access only:
 - `ecs:ListServices`
 - `ecs:DescribeServices`
 - `ecs:DescribeTaskDefinition`
+- `ecs:ListTasks`
+- `ecs:DescribeTasks`
 - `elasticloadbalancing:DescribeLoadBalancers`
 - `elasticloadbalancing:DescribeTargetGroups`
 - `elasticloadbalancing:DescribeTargetHealth`

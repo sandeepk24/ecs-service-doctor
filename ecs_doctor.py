@@ -14,6 +14,7 @@ Checks:
 - recent ECS service events
 - task definition image
 - load balancer target group health
+- recent stable task definitions for rollback
 
 Usage:
     python ecs_doctor.py --cluster my-cluster --service my-api
@@ -25,6 +26,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -37,7 +39,7 @@ from botocore.exceptions import ClientError, ProfileNotFound
 from topology import build_route53_index, discover_connectivity
 
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -452,6 +454,287 @@ def extract_recent_events(service: Dict[str, Any], limit: int) -> List[Dict[str,
     ]
 
 
+TASK_DEFINITION_REF_RE = re.compile(
+    r"task-definition/([A-Za-z0-9_-]+):(\d+)"
+)
+STEADY_STATE_MARKERS = (
+    "has reached a steady state",
+    "deployment completed",
+)
+STABLE_STOP_CODES = {
+    "ServiceSchedulerInitiated",
+    "UserInitiated",
+}
+
+
+def parse_task_definition_arn(task_definition_arn: str) -> Dict[str, Any]:
+    family_revision = task_definition_arn.rsplit("/", 1)[-1]
+    family, revision_str = family_revision.rsplit(":", 1)
+    return {
+        "family": family,
+        "revision": int(revision_str),
+        "task_definition": family_revision,
+    }
+
+
+def resolve_task_definition_arn(
+    service: Dict[str, Any],
+    family: str,
+    revision: str,
+) -> str:
+    suffix = f"{family}:{revision}"
+    for deployment in service.get("deployments", []):
+        task_definition_arn = deployment.get("taskDefinition", "")
+        if task_definition_arn.endswith(suffix):
+            return task_definition_arn
+
+    current = service.get("taskDefinition", "")
+    if current.endswith(suffix):
+        return current
+
+    if current and "/" in current:
+        return f"{current.rsplit('/', 1)[0]}/{suffix}"
+
+    return suffix
+
+
+def build_rollback_command(
+    cluster_name: str,
+    service_name: str,
+    task_definition: str,
+) -> str:
+    return (
+        f"aws ecs update-service --cluster {cluster_name} "
+        f"--service {service_name} --task-definition {task_definition} "
+        "--force-new-deployment"
+    )
+
+
+def _upsert_stable_candidate(
+    candidates: Dict[str, Dict[str, Any]],
+    task_definition_arn: str,
+    last_stable_at: Any,
+    source: str,
+    **extra: Any,
+) -> None:
+    parsed = parse_task_definition_arn(task_definition_arn)
+    timestamp = str(last_stable_at) if last_stable_at else None
+    existing = candidates.get(task_definition_arn)
+
+    if existing and existing.get("last_stable_at") and timestamp:
+        if existing["last_stable_at"] >= timestamp:
+            existing.update({key: value for key, value in extra.items() if value is not None})
+            return
+
+    candidates[task_definition_arn] = {
+        "task_definition_arn": task_definition_arn,
+        **parsed,
+        "last_stable_at": timestamp,
+        "source": source,
+        **extra,
+    }
+
+
+def collect_stable_tasks_from_deployments(
+    service: Dict[str, Any],
+    candidates: Dict[str, Dict[str, Any]],
+) -> None:
+    for deployment in service.get("deployments", []):
+        task_definition_arn = deployment.get("taskDefinition")
+        if not task_definition_arn:
+            continue
+
+        rollout_state = deployment.get("rolloutState")
+        running_count = deployment.get("runningCount", 0)
+        if rollout_state != "COMPLETED" and running_count <= 0:
+            continue
+
+        _upsert_stable_candidate(
+            candidates,
+            task_definition_arn,
+            deployment.get("updatedAt") or deployment.get("createdAt"),
+            "deployment",
+            deployment_status=deployment.get("status"),
+            running_count=running_count,
+            rollout_state=rollout_state,
+        )
+
+
+def collect_stable_tasks_from_events(
+    service: Dict[str, Any],
+    candidates: Dict[str, Dict[str, Any]],
+) -> None:
+    events = service.get("events", [])
+    for index, event in enumerate(events):
+        message = event.get("message", "")
+        lowered = message.lower()
+        if not any(marker in lowered for marker in STEADY_STATE_MARKERS):
+            continue
+
+        task_definition_arn = None
+        match = TASK_DEFINITION_REF_RE.search(message)
+        if match:
+            task_definition_arn = resolve_task_definition_arn(
+                service,
+                match.group(1),
+                match.group(2),
+            )
+
+        if not task_definition_arn:
+            for older_event in events[index + 1 : index + 20]:
+                match = TASK_DEFINITION_REF_RE.search(older_event.get("message", ""))
+                if match:
+                    task_definition_arn = resolve_task_definition_arn(
+                        service,
+                        match.group(1),
+                        match.group(2),
+                    )
+                    break
+
+        if not task_definition_arn:
+            continue
+
+        _upsert_stable_candidate(
+            candidates,
+            task_definition_arn,
+            event.get("createdAt"),
+            "steady_state_event",
+        )
+
+
+def collect_stable_tasks_from_stopped_tasks(
+    ecs_client,
+    cluster_name: str,
+    service_name: str,
+    candidates: Dict[str, Dict[str, Any]],
+    max_tasks: int = 50,
+) -> None:
+    try:
+        response = ecs_client.list_tasks(
+            cluster=cluster_name,
+            serviceName=service_name,
+            desiredStatus="STOPPED",
+            maxResults=min(max_tasks, 100),
+        )
+    except ClientError:
+        return
+
+    task_arns = response.get("taskArns", [])
+    if not task_arns:
+        return
+
+    for offset in range(0, len(task_arns), 100):
+        batch = task_arns[offset : offset + 100]
+        described = ecs_client.describe_tasks(cluster=cluster_name, tasks=batch)
+        for task in described.get("tasks", []):
+            stop_code = task.get("stopCode")
+            if stop_code not in STABLE_STOP_CODES:
+                continue
+
+            task_definition_arn = task.get("taskDefinitionArn")
+            if not task_definition_arn:
+                continue
+
+            started_at = task.get("startedAt")
+            stopped_at = task.get("stoppedAt") or task.get("stoppingAt")
+            if started_at and stopped_at and stopped_at <= started_at:
+                continue
+
+            _upsert_stable_candidate(
+                candidates,
+                task_definition_arn,
+                stopped_at or started_at,
+                "stopped_task",
+                task_arn=task.get("taskArn"),
+                stop_code=stop_code,
+            )
+
+
+def enrich_stable_task_candidates(
+    ecs_client,
+    candidates: Dict[str, Dict[str, Any]],
+    cluster_name: str,
+    service_name: str,
+    current_task_definition: Optional[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    ordered = sorted(
+        candidates.values(),
+        key=lambda item: item.get("last_stable_at") or "",
+        reverse=True,
+    )[:limit]
+
+    enriched: List[Dict[str, Any]] = []
+    for item in ordered:
+        task_definition_arn = item["task_definition_arn"]
+        try:
+            task_definition = describe_task_definition(ecs_client, task_definition_arn)
+            container_images = get_container_images(task_definition)
+        except ClientError:
+            container_images = []
+
+        primary_image = container_images[0]["image"] if container_images else None
+        task_definition_short = item["task_definition"]
+        enriched.append(
+            {
+                **item,
+                "container_images": container_images,
+                "image": primary_image,
+                "is_current": task_definition_arn == current_task_definition,
+                "rollback_command": build_rollback_command(
+                    cluster_name,
+                    service_name,
+                    task_definition_short,
+                ),
+            }
+        )
+
+    return enriched
+
+
+def evaluate_stable_task_history(
+    ecs_client,
+    cluster_name: str,
+    service_name: str,
+    service: Dict[str, Any],
+    current_task_definition: Optional[str],
+    limit: int = 3,
+) -> Dict[str, Any]:
+    candidates: Dict[str, Dict[str, Any]] = {}
+
+    collect_stable_tasks_from_deployments(service, candidates)
+    collect_stable_tasks_from_events(service, candidates)
+    collect_stable_tasks_from_stopped_tasks(
+        ecs_client,
+        cluster_name,
+        service_name,
+        candidates,
+    )
+
+    stable_tasks = enrich_stable_task_candidates(
+        ecs_client,
+        candidates,
+        cluster_name,
+        service_name,
+        current_task_definition,
+        limit,
+    )
+
+    if not stable_tasks:
+        return {
+            "status": STATUS_PASS,
+            "message": "No recent stable task definitions found",
+            "stable_tasks": [],
+        }
+
+    summary_names = ", ".join(task["task_definition"] for task in stable_tasks)
+    return {
+        "status": STATUS_PASS,
+        "message": f"{len(stable_tasks)} recent stable task definition(s): {summary_names}",
+        "stable_tasks": stable_tasks,
+    }
+
+
 def fetch_target_group_health_parallel(
     elbv2_client,
     target_group_arns: List[str],
@@ -862,11 +1145,22 @@ def inspect_service(
                 route53_index=route53_index or {},
             )
 
+        if checks_config.get("include_stable_task_history", True):
+            stable_limit = checks_config.get("stable_task_limit", 3)
+            result["checks"]["stable_tasks"] = evaluate_stable_task_history(
+                ecs_client,
+                cluster_name,
+                service_name,
+                service,
+                service.get("taskDefinition"),
+                stable_limit,
+            )
+
         result["status"] = aggregate_check_status(
             {
                 key: value
                 for key, value in result["checks"].items()
-                if key != "connectivity"
+                if key not in {"connectivity", "stable_tasks"}
             }
         )
 
@@ -1036,6 +1330,16 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         if target_health.get("attachment_summary"):
             lines.append(f"  Target groups: {target_health['attachment_summary']}")
 
+    stable_tasks = checks.get("stable_tasks", {})
+    for task in stable_tasks.get("stable_tasks", [])[:3]:
+        label = task.get("task_definition", "unknown")
+        image = task.get("image")
+        current = " (current)" if task.get("is_current") else ""
+        if image:
+            lines.append(f"  Stable task: {label}{current} — {image}")
+        else:
+            lines.append(f"  Stable task: {label}{current}")
+
     images = checks.get("task_definition", {}).get("container_images", [])
     if images:
         primary = images[0]
@@ -1141,6 +1445,18 @@ def print_human_report(report: Dict[str, Any]) -> None:
         target_health = checks.get("target_group_health")
         if target_health:
             print(f"  Target Health   : [{target_health['status']}] {target_health['message']}")
+
+        stable_tasks = checks.get("stable_tasks")
+        if stable_tasks and stable_tasks.get("stable_tasks"):
+            print(f"  Stable Tasks    : [{stable_tasks['status']}] {stable_tasks['message']}")
+            for task in stable_tasks["stable_tasks"]:
+                current = " (current)" if task.get("is_current") else ""
+                image = task.get("image", "unknown")
+                print(
+                    f"    - {task.get('task_definition')}{current} "
+                    f"last stable {task.get('last_stable_at', 'unknown')} -> {image}"
+                )
+                print(f"      Rollback: {task.get('rollback_command')}")
 
         task_definition = checks.get("task_definition")
         if task_definition:
@@ -1262,6 +1578,45 @@ def build_sample_report() -> Dict[str, Any]:
                             }
                         ],
                     },
+                    "stable_tasks": {
+                        "status": STATUS_PASS,
+                        "message": "3 recent stable task definition(s): orders-api:42, orders-api:41, orders-api:40",
+                        "stable_tasks": [
+                            {
+                                "task_definition_arn": "arn:aws:ecs:us-east-1:123456789012:task-definition/orders-api:42",
+                                "task_definition": "orders-api:42",
+                                "family": "orders-api",
+                                "revision": 42,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3",
+                                "last_stable_at": "2026-08-07T19:58:00+00:00",
+                                "source": "deployment",
+                                "is_current": True,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service orders-api --task-definition orders-api:42 --force-new-deployment",
+                            },
+                            {
+                                "task_definition_arn": "arn:aws:ecs:us-east-1:123456789012:task-definition/orders-api:41",
+                                "task_definition": "orders-api:41",
+                                "family": "orders-api",
+                                "revision": 41,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.2",
+                                "last_stable_at": "2026-08-05T14:20:00+00:00",
+                                "source": "steady_state_event",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service orders-api --task-definition orders-api:41 --force-new-deployment",
+                            },
+                            {
+                                "task_definition_arn": "arn:aws:ecs:us-east-1:123456789012:task-definition/orders-api:40",
+                                "task_definition": "orders-api:40",
+                                "family": "orders-api",
+                                "revision": 40,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.1",
+                                "last_stable_at": "2026-08-01T09:10:00+00:00",
+                                "source": "stopped_task",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service orders-api --task-definition orders-api:40 --force-new-deployment",
+                            },
+                        ],
+                    },
                     "connectivity": {
                         "status": STATUS_PASS,
                         "summary": "Route 53 → Load Balancer → Target Group → ECS → backend(s) → ECR",
@@ -1342,6 +1697,32 @@ def build_sample_report() -> Dict[str, Any]:
                             }
                         ],
                     },
+                    "stable_tasks": {
+                        "status": STATUS_PASS,
+                        "message": "2 recent stable task definition(s): agents-service:7, agents-service:6",
+                        "stable_tasks": [
+                            {
+                                "task_definition": "agents-service:7",
+                                "family": "agents-service",
+                                "revision": 7,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/agents-service:v0.8.9",
+                                "last_stable_at": "2026-08-06T11:00:00+00:00",
+                                "source": "deployment",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service agents-service --task-definition agents-service:7 --force-new-deployment",
+                            },
+                            {
+                                "task_definition": "agents-service:6",
+                                "family": "agents-service",
+                                "revision": 6,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/agents-service:v0.8.8",
+                                "last_stable_at": "2026-08-03T16:30:00+00:00",
+                                "source": "steady_state_event",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service agents-service --task-definition agents-service:6 --force-new-deployment",
+                            },
+                        ],
+                    },
                     "connectivity": {
                         "status": STATUS_PASS,
                         "summary": "Load Balancer → Target Group → ECS → ECR",
@@ -1419,6 +1800,42 @@ def build_sample_report() -> Dict[str, Any]:
                             {
                                 "created_at": "2026-08-07T19:50:00+00:00",
                                 "message": "(service payments-api) (task abc123) (port 8080) is unhealthy in target-group tg-payments due to Health checks failed.",
+                            },
+                        ],
+                    },
+                    "stable_tasks": {
+                        "status": STATUS_PASS,
+                        "message": "3 recent stable task definition(s): payments-api:16, payments-api:15, payments-api:14",
+                        "stable_tasks": [
+                            {
+                                "task_definition": "payments-api:16",
+                                "family": "payments-api",
+                                "revision": 16,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v2.0.0",
+                                "last_stable_at": "2026-08-06T08:00:00+00:00",
+                                "source": "deployment",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service payments-api --task-definition payments-api:16 --force-new-deployment",
+                            },
+                            {
+                                "task_definition": "payments-api:15",
+                                "family": "payments-api",
+                                "revision": 15,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v1.9.9",
+                                "last_stable_at": "2026-08-04T12:00:00+00:00",
+                                "source": "steady_state_event",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service payments-api --task-definition payments-api:15 --force-new-deployment",
+                            },
+                            {
+                                "task_definition": "payments-api:14",
+                                "family": "payments-api",
+                                "revision": 14,
+                                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v1.9.8",
+                                "last_stable_at": "2026-08-02T18:00:00+00:00",
+                                "source": "stopped_task",
+                                "is_current": False,
+                                "rollback_command": "aws ecs update-service --cluster dev-apps-cluster --service payments-api --task-definition payments-api:14 --force-new-deployment",
                             },
                         ],
                     },

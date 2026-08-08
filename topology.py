@@ -17,6 +17,7 @@ NODE_CLOUD_MAP = "cloud_map"
 NODE_ECR = "ecr"
 NODE_INTERNET = "internet"
 NODE_GENERIC = "backend"
+NODE_TARGET_GROUP = "target_group"
 
 DB_HOST_KEYS = {
     "DATABASE_URL",
@@ -76,28 +77,43 @@ def build_route53_index(route53_client) -> Dict[str, List[str]]:
     return index
 
 
-def discover_load_balancers(elbv2_client, service: Dict[str, Any]) -> List[Dict[str, Any]]:
-    target_group_arns = [
-        item["targetGroupArn"]
+def discover_load_balancers(
+    elbv2_client, service: Dict[str, Any]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    attachments_by_arn = {
+        item["targetGroupArn"]: item
         for item in service.get("loadBalancers", [])
         if item.get("targetGroupArn")
-    ]
+    }
+    target_group_arns = list(attachments_by_arn.keys())
     if not target_group_arns:
-        return []
+        return [], []
 
     load_balancers: Dict[str, Dict[str, Any]] = {}
+    target_groups: List[Dict[str, Any]] = []
 
     for offset in range(0, len(target_group_arns), 20):
         batch = target_group_arns[offset : offset + 20]
         response = elbv2_client.describe_target_groups(TargetGroupArns=batch)
         lb_arns: Set[str] = set()
-        tg_by_lb: Dict[str, str] = {}
 
         for target_group in response.get("TargetGroups", []):
+            tg_arn = target_group["TargetGroupArn"]
             tg_name = target_group.get("TargetGroupName", "target-group")
+            attachment = attachments_by_arn.get(tg_arn, {})
+            target_groups.append(
+                {
+                    "arn": tg_arn,
+                    "name": tg_name,
+                    "port": target_group.get("Port"),
+                    "protocol": target_group.get("Protocol"),
+                    "load_balancer_arns": target_group.get("LoadBalancerArns", []),
+                    "container_name": attachment.get("containerName"),
+                    "container_port": attachment.get("containerPort"),
+                }
+            )
             for lb_arn in target_group.get("LoadBalancerArns", []):
                 lb_arns.add(lb_arn)
-                tg_by_lb[lb_arn] = tg_name
 
         if not lb_arns:
             continue
@@ -115,10 +131,9 @@ def discover_load_balancers(elbv2_client, service: Dict[str, Any]) -> List[Dict[
                 "name": load_balancer.get("LoadBalancerName", "load-balancer"),
                 "dns_name": load_balancer.get("DNSName", "").rstrip("."),
                 "scheme": load_balancer.get("Scheme", "unknown"),
-                "target_group": tg_by_lb.get(arn),
             }
 
-    return list(load_balancers.values())
+    return list(load_balancers.values()), target_groups
 
 
 def discover_service_registries(sd_client, service: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -253,6 +268,7 @@ def build_topology(
     task_definition: Optional[Dict[str, Any]],
     container_images: Optional[List[Dict[str, str]]],
     load_balancers: List[Dict[str, Any]],
+    target_groups: List[Dict[str, Any]],
     service_registries: List[Dict[str, Any]],
     route53_index: Dict[str, List[str]],
 ) -> Dict[str, Any]:
@@ -282,7 +298,41 @@ def build_topology(
                 "detail": f"{load_balancer['lb_type'].upper()} · {load_balancer['scheme']}",
             }
         )
-        edges.append({"from": lb_id, "to": ecs_id, "label": "routes traffic"})
+
+        lb_target_groups = [
+            target_group
+            for target_group in target_groups
+            if load_balancer["arn"] in target_group.get("load_balancer_arns", [])
+        ]
+        if not lb_target_groups:
+            lb_target_groups = target_groups
+
+        for target_group in lb_target_groups:
+            tg_id = _node_id("tg", target_group["name"])
+            port_bits = []
+            if target_group.get("protocol"):
+                port_bits.append(str(target_group["protocol"]))
+            if target_group.get("port") is not None:
+                port_bits.append(str(target_group["port"]))
+            detail = " · ".join(port_bits) if port_bits else "target group"
+            if target_group.get("container_name"):
+                detail += f" → {target_group['container_name']}"
+                if target_group.get("container_port") is not None:
+                    detail += f":{target_group['container_port']}"
+
+            nodes.append(
+                {
+                    "id": tg_id,
+                    "type": NODE_TARGET_GROUP,
+                    "label": target_group["name"],
+                    "detail": detail,
+                }
+            )
+            edges.append({"from": lb_id, "to": tg_id, "label": "forwards to"})
+            edges.append({"from": tg_id, "to": ecs_id, "label": "registers tasks"})
+
+        if not lb_target_groups:
+            edges.append({"from": lb_id, "to": ecs_id, "label": "routes traffic"})
 
         dns_name = load_balancer.get("dns_name", "")
         record_names = route53_index.get(dns_name, []) if dns_name else []
@@ -369,6 +419,8 @@ def build_topology(
         summary_parts.append("Route 53")
     if any(node["type"] in {NODE_ALB, NODE_NLB} for node in nodes):
         summary_parts.append("Load Balancer")
+    if any(node["type"] == NODE_TARGET_GROUP for node in nodes):
+        summary_parts.append("Target Group")
     summary_parts.append("ECS")
     if backends:
         summary_parts.append("backend(s)")
@@ -402,6 +454,7 @@ def build_mermaid(nodes: List[Dict[str, Any]], edges: List[Dict[str, str]]) -> s
         NODE_CLOUD_MAP: ("{{", "}}"),
         NODE_ECR: (">", "]"),
         NODE_INTERNET: ("((", "))"),
+        NODE_TARGET_GROUP: ("/", "\\"),
     }
 
     lines = ["flowchart LR"]
@@ -431,7 +484,7 @@ def discover_connectivity(
     cluster_name: str,
     route53_index: Dict[str, List[str]],
 ) -> Dict[str, Any]:
-    load_balancers = discover_load_balancers(elbv2_client, service)
+    load_balancers, target_groups = discover_load_balancers(elbv2_client, service)
     service_registries = discover_service_registries(sd_client, service)
 
     return build_topology(
@@ -441,6 +494,7 @@ def discover_connectivity(
         task_definition=task_definition,
         container_images=container_images,
         load_balancers=load_balancers,
+        target_groups=target_groups,
         service_registries=service_registries,
         route53_index=route53_index,
     )

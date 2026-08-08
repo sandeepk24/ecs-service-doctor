@@ -69,10 +69,10 @@ python ecs_doctor.py -c my-cluster --all-services --html
 
 - Tasks running vs desired count
 - Deployment finished or still rolling out
-- Load balancer target health
+- Target group detection, attachment validation, and target health
 - Container image currently deployed
 - Recent ECS error messages
-- Connectivity path (Route 53, ALB/NLB, databases inferred from env vars, ECR)
+- Connectivity path (Route 53, ALB/NLB, target groups, databases inferred from env vars, ECR)
 
 ---
 

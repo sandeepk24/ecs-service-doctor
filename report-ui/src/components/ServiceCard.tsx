@@ -97,6 +97,64 @@ function TargetGroupSection({
   );
 }
 
+function StableTasksSection({
+  stableTasks,
+}: {
+  stableTasks?: ReportCheck & {
+    stable_tasks?: Array<{
+      task_definition?: string;
+      image?: string;
+      last_stable_at?: string;
+      is_current?: boolean;
+      source?: string;
+      rollback_command?: string;
+    }>;
+    message?: string;
+  };
+}) {
+  const tasks = stableTasks?.stable_tasks ?? [];
+  if (!tasks.length) {
+    return null;
+  }
+
+  return (
+    <div className="stable-tasks">
+      <div className="stable-tasks-head">
+        <h4>Stable tasks (rollback)</h4>
+        {stableTasks?.message && (
+          <span className="stable-tasks-summary">{stableTasks.message}</span>
+        )}
+      </div>
+      <ul className="stable-task-list">
+        {tasks.map((task) => (
+          <li key={task.task_definition} className="stable-task-item">
+            <div className="stable-task-title">
+              <code>{task.task_definition}</code>
+              {task.is_current && <span className="current-tag">Current</span>}
+            </div>
+            {task.image && (
+              <div className="stable-task-image">
+                <span className="mini-label">Image</span>
+                <code>{task.image}</code>
+              </div>
+            )}
+            <div className="stable-task-meta">
+              {task.last_stable_at && <span>Last stable {task.last_stable_at}</span>}
+              {task.source && <span>{task.source.replace(/_/g, " ")}</span>}
+            </div>
+            {task.rollback_command && (
+              <div className="rollback-command">
+                <span className="mini-label">Rollback</span>
+                <code>{task.rollback_command}</code>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function CheckRow({
   label,
   status,
@@ -178,6 +236,8 @@ export function ServiceCard({ item }: Props) {
           </div>
 
           <TargetGroupSection targetHealth={checks.target_group_health} />
+
+          <StableTasksSection stableTasks={checks.stable_tasks} />
 
           {connectivity?.nodes?.length ? (
             <TopologyDiagram topology={connectivity} />

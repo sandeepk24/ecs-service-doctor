@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, rollout state, target group attachment, load balancer health, recent ECS events, container images, and the connectivity path your app depends on.
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, rollout state, target group attachment, load balancer health, recent ECS events, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
 
 ---
 
@@ -103,6 +103,82 @@ This is **read-only** — it inspects your services and produces a CLI summary, 
 
 ---
 
+## Stable tasks and rollback
+
+When a deploy goes wrong, you often need the **previous task definition revision** — not just a count of running tasks. ECS tracks deployments, but finding “what was last known-good” usually means digging through events or guessing revision numbers.
+
+ecs-service-doctor lists the **last 3 stable task definitions** per service. Each entry includes:
+
+| Field | Description |
+|-------|-------------|
+| **Task definition** | Short form, e.g. `orders-api:41` — what you pass to `update-service` |
+| **Image** | Container image/tag from that revision |
+| **Last stable at** | When that revision last reached a stable state |
+| **Source** | How it was discovered (see below) |
+| **Current** | Whether this is the revision the service runs now |
+| **Rollback command** | Ready-to-run AWS CLI command |
+
+### How stable tasks are found
+
+The tool combines three read-only sources:
+
+1. **Completed deployments** — ECS deployment records with `rolloutState: COMPLETED` and running tasks
+2. **Steady-state events** — service events like `(service X) has reached a steady state` correlated with task definition revisions
+3. **Recently stopped tasks** — tasks stopped cleanly by ECS during deploys or scale-in (`ServiceSchedulerInitiated`, `UserInitiated`), not crash loops
+
+Results are deduplicated by revision, sorted by most recently stable, and limited to **3 by default**.
+
+### Example CLI output
+
+```
+[HEALTHY] dev-apps-cluster / orders-api
+  Tasks: 2/2 running
+  Deployment: finished
+  Load balancer: Target groups attached correctly: healthy=2, unhealthy=0
+  Stable task: orders-api:42 (current) — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
+  Stable task: orders-api:41 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.2
+  Stable task: orders-api:40 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.1
+```
+
+Use `--verbose` to see full rollback commands:
+
+```
+  Stable Tasks    : [PASS] 3 recent stable task definition(s): orders-api:42, orders-api:41, orders-api:40
+    - orders-api:41 last stable 2026-08-05T14:20:00+00:00 -> .../orders-api:v1.2.2
+      Rollback: aws ecs update-service --cluster dev-apps-cluster --service orders-api --task-definition orders-api:41 --force-new-deployment
+```
+
+### Roll back to a stable revision
+
+Copy the rollback command from the report or run it yourself:
+
+```bash
+aws ecs update-service \
+  --cluster dev-apps-cluster \
+  --service orders-api \
+  --task-definition orders-api:41 \
+  --force-new-deployment
+```
+
+This does **not** roll back automatically — it only surfaces candidates so you can decide and execute the rollback.
+
+### Config (optional)
+
+In an advanced config file you can tune stable task history:
+
+```json
+{
+  "checks": {
+    "include_stable_task_history": true,
+    "stable_task_limit": 3
+  }
+}
+```
+
+Set `include_stable_task_history` to `false` to skip this check. Increase `stable_task_limit` if you want more than 3 rollback candidates (default: `3`).
+
+---
+
 ## Config file (optional)
 
 Use a config file when you check many services regularly or need advanced options.
@@ -145,13 +221,17 @@ Account: 123456789012
   Deployment: finished
   Load balancer: Target groups attached correctly: healthy=2, unhealthy=0
   Target groups: 1 target group(s): tg-orders — attachments look correct
+  Stable task: orders-api:42 (current) — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
+  Stable task: orders-api:41 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.2
   Image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
   Connectivity: Route 53 → Load Balancer → Target Group → ECS → backend(s) → ECR
 
 [UNHEALTHY] dev-apps-cluster / payments-api
   Tasks: 1/2 running — Running count is below desired count: running=1, desired=2
   Deployment: Primary deployment rollout state is IN_PROGRESS
-  Load balancer: Unhealthy targets detected: 1
+  Load balancer: 1 unhealthy target(s) registered
+  Stable task: payments-api:16 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v2.0.0
+  Stable task: payments-api:15 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v1.9.9
   Latest event: (service payments-api) has started 1 tasks...
 
 ==================================================

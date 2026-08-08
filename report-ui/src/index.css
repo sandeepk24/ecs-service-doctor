@@ -402,6 +402,82 @@ body {
   font-size: 0.92rem;
 }
 
+.target-groups {
+  margin-bottom: 0.85rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.target-groups-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.55rem;
+}
+
+.target-groups-head h4 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.target-groups-summary {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.target-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.target-group-item {
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.target-group-item.ok {
+  border-color: rgba(52, 211, 153, 0.25);
+}
+
+.target-group-item.issue {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.target-group-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.target-group-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.target-group-issues {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: #fca5a5;
+}
+
 .images,
 .events {
   margin-top: 0.75rem;
@@ -536,6 +612,11 @@ body {
 .topology-node.load-balancer {
   border-color: rgba(6, 182, 212, 0.35);
   box-shadow: inset 0 0 0 1px rgba(6, 182, 212, 0.12);
+}
+
+.topology-node.target-group {
+  border-color: rgba(14, 165, 233, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.12);
 }
 
 .topology-node.ecs {

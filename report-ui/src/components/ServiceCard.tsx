@@ -1,10 +1,100 @@
-import type { ServiceResult, Topology } from "../types";
+import type { ReportCheck, ServiceResult, Topology } from "../types";
 import { statusLabel } from "../utils";
 import { StatusBadge } from "./StatusBadge";
 import { TopologyDiagram } from "./TopologyDiagram";
 
 interface Props {
   item: ServiceResult;
+}
+
+interface TargetGroupCheck {
+  name?: string;
+  attachment_ok?: boolean;
+  attachment_summary?: string;
+  attachment_issues?: string[];
+  ecs_container_name?: string;
+  ecs_container_port?: number;
+  port?: number;
+  protocol?: string;
+  registered_targets?: number;
+  counts?: Record<string, number>;
+}
+
+function TargetGroupSection({
+  targetHealth,
+}: {
+  targetHealth?: ReportCheck & {
+    target_groups?: TargetGroupCheck[];
+    attachment_summary?: string;
+    attachment_ok?: boolean;
+  };
+}) {
+  const groups = targetHealth?.target_groups ?? [];
+  if (!groups.length) {
+    return null;
+  }
+
+  return (
+    <div className="target-groups">
+      <div className="target-groups-head">
+        <h4>Target groups</h4>
+        {targetHealth?.attachment_summary && (
+          <span className="target-groups-summary">{targetHealth.attachment_summary}</span>
+        )}
+      </div>
+      <ul className="target-group-list">
+        {groups.map((group) => {
+          const healthy = group.counts?.healthy ?? 0;
+          const unhealthy = group.counts?.unhealthy ?? 0;
+          const initial = group.counts?.initial ?? 0;
+          const healthBits = [
+            healthy ? `${healthy} healthy` : null,
+            unhealthy ? `${unhealthy} unhealthy` : null,
+            initial ? `${initial} registering` : null,
+          ].filter(Boolean);
+
+          return (
+            <li
+              key={group.name ?? group.ecs_container_name}
+              className={`target-group-item ${group.attachment_ok ? "ok" : "issue"}`}
+            >
+              <div className="target-group-title">
+                <strong>{group.name ?? "target group"}</strong>
+                <StatusBadge
+                  status={group.attachment_ok ? "PASS" : "FAIL"}
+                  label={group.attachment_ok ? "Attached OK" : "Attachment issue"}
+                />
+              </div>
+              <div className="target-group-meta">
+                {group.protocol && group.port != null && (
+                  <span>
+                    {group.protocol}:{group.port}
+                  </span>
+                )}
+                {group.ecs_container_name && (
+                  <span>
+                    → {group.ecs_container_name}
+                    {group.ecs_container_port != null ? `:${group.ecs_container_port}` : ""}
+                  </span>
+                )}
+                {group.registered_targets != null && (
+                  <span>{group.registered_targets} registered</span>
+                )}
+                {healthBits.length > 0 && <span>{healthBits.join(" · ")}</span>}
+              </div>
+              {group.attachment_issues?.length ? (
+                <ul className="target-group-issues">
+                  {group.attachment_issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function CheckRow({
@@ -86,6 +176,8 @@ export function ServiceCard({ item }: Props) {
               message={checks.target_group_health?.message}
             />
           </div>
+
+          <TargetGroupSection targetHealth={checks.target_group_health} />
 
           {connectivity?.nodes?.length ? (
             <TopologyDiagram topology={connectivity} />

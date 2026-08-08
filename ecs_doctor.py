@@ -37,7 +37,7 @@ from botocore.exceptions import ClientError, ProfileNotFound
 from topology import build_route53_index, discover_connectivity
 
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -470,48 +470,249 @@ def fetch_target_group_health_parallel(
         )
 
 
+def describe_target_groups_batch(
+    elbv2_client,
+    target_group_arns: List[str],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+    """Return target group metadata and lookup failures."""
+    metadata: Dict[str, Dict[str, Any]] = {}
+    failures: Dict[str, str] = {}
+
+    if not target_group_arns:
+        return metadata, failures
+
+    for offset in range(0, len(target_group_arns), 20):
+        batch = target_group_arns[offset : offset + 20]
+        response = elbv2_client.describe_target_groups(TargetGroupArns=batch)
+
+        for target_group in response.get("TargetGroups", []):
+            metadata[target_group["TargetGroupArn"]] = target_group
+
+        for failure in response.get("Failures", []):
+            arn = failure.get("TargetGroupArn") or failure.get("ResourceArn", "unknown")
+            failures[arn] = failure.get("Reason", "Target group not found")
+
+    for arn in target_group_arns:
+        if arn not in metadata and arn not in failures:
+            failures[arn] = "Target group not found"
+
+    return metadata, failures
+
+
+def _container_port_exists(
+    task_definition: Dict[str, Any],
+    container_name: str,
+    container_port: int,
+) -> bool:
+    for container in task_definition.get("containerDefinitions", []):
+        if container.get("name") != container_name:
+            continue
+        for mapping in container.get("portMappings", []):
+            if mapping.get("containerPort") == container_port:
+                return True
+    return False
+
+
+def _validate_target_group_attachment(
+    *,
+    attachment: Dict[str, Any],
+    target_group: Optional[Dict[str, Any]],
+    lookup_error: Optional[str],
+    health: Dict[str, Any],
+    task_definition: Optional[Dict[str, Any]],
+    running_count: int,
+) -> Dict[str, Any]:
+    container_name = attachment.get("containerName")
+    container_port = attachment.get("containerPort")
+    target_group_arn = attachment.get("targetGroupArn", "")
+
+    result: Dict[str, Any] = {
+        "target_group_arn": target_group_arn,
+        "ecs_container_name": container_name,
+        "ecs_container_port": container_port,
+        "attachment_ok": True,
+        "attachment_issues": [],
+    }
+
+    if lookup_error or not target_group:
+        result.update(
+            {
+                "name": target_group_arn.rsplit("/", 1)[-1],
+                "attachment_ok": False,
+                "attachment_issues": [
+                    lookup_error or "Target group does not exist or is inaccessible"
+                ],
+            }
+        )
+        result.update(health)
+        return result
+
+    registered_total = sum(health.get("counts", {}).values())
+    load_balancer_arns = target_group.get("LoadBalancerArns", [])
+
+    result.update(
+        {
+            "name": target_group.get("TargetGroupName"),
+            "port": target_group.get("Port"),
+            "protocol": target_group.get("Protocol"),
+            "target_type": target_group.get("TargetType"),
+            "vpc_id": target_group.get("VpcId"),
+            "health_check_path": target_group.get("HealthCheckPath"),
+            "load_balancer_arns": load_balancer_arns,
+            "load_balancer_count": len(load_balancer_arns),
+            "registered_targets": registered_total,
+        }
+    )
+    result.update(health)
+
+    issues: List[str] = []
+
+    if not load_balancer_arns:
+        issues.append("Target group is not attached to any load balancer")
+
+    if task_definition and container_name:
+        container_names = [
+            container.get("name")
+            for container in task_definition.get("containerDefinitions", [])
+        ]
+        if container_name not in container_names:
+            issues.append(
+                f"ECS references container '{container_name}' but it is not in the task definition"
+            )
+        elif container_port is not None and not _container_port_exists(
+            task_definition, container_name, container_port
+        ):
+            issues.append(
+                f"ECS attachment port {container_port} on '{container_name}' "
+                "does not match any task definition port mapping"
+            )
+
+    if (
+        target_group.get("Port") is not None
+        and container_port is not None
+        and target_group.get("TargetType") == "ip"
+        and target_group.get("Port") != container_port
+    ):
+        issues.append(
+            f"Target group port {target_group.get('Port')} differs from ECS container port {container_port}"
+        )
+
+    if running_count > 0 and registered_total == 0:
+        issues.append(
+            f"No targets registered in target group while service has {running_count} running task(s)"
+        )
+
+    if health.get("counts", {}).get("unhealthy", 0) > 0:
+        unhealthy = health["counts"]["unhealthy"]
+        issues.append(f"{unhealthy} unhealthy target(s) registered")
+
+    result["attachment_issues"] = issues
+    result["attachment_ok"] = not issues
+    return result
+
+
 def evaluate_target_health(
     service: Dict[str, Any],
     elbv2_client,
     fail_on_unhealthy_targets: bool,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    task_definition: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    target_group_arns = [
-        load_balancer["targetGroupArn"]
+    attachments = [
+        load_balancer
         for load_balancer in service.get("loadBalancers", [])
         if load_balancer.get("targetGroupArn")
     ]
+    classic_elb = [
+        load_balancer
+        for load_balancer in service.get("loadBalancers", [])
+        if load_balancer.get("loadBalancerName") and not load_balancer.get("targetGroupArn")
+    ]
 
-    if not target_group_arns:
+    if not attachments:
+        message = "No target group attached to service"
+        if classic_elb:
+            message = "Classic ELB detected; target group validation requires ALB/NLB"
         return {
             "status": STATUS_WARN,
-            "message": "No load balancer attached to service",
+            "message": message,
             "target_groups": [],
+            "attachment_summary": message,
         }
+
+    target_group_arns = [item["targetGroupArn"] for item in attachments]
+    metadata, lookup_failures = describe_target_groups_batch(elbv2_client, target_group_arns)
 
     target_group_results = fetch_target_group_health_parallel(
         elbv2_client,
         target_group_arns,
         max_workers,
     )
+    health_by_arn = {item["target_group_arn"]: item for item in target_group_results}
 
-    healthy_total = sum(r["counts"].get("healthy", 0) for r in target_group_results)
-    unhealthy_total = sum(r["counts"].get("unhealthy", 0) for r in target_group_results)
-    initial_total = sum(r["counts"].get("initial", 0) for r in target_group_results)
+    running_count = service.get("runningCount", 0)
+    enriched_groups = [
+        _validate_target_group_attachment(
+            attachment=attachment,
+            target_group=metadata.get(attachment["targetGroupArn"]),
+            lookup_error=lookup_failures.get(attachment["targetGroupArn"]),
+            health=health_by_arn.get(
+                attachment["targetGroupArn"],
+                {"target_group_arn": attachment["targetGroupArn"], "counts": {}, "targets": []},
+            ),
+            task_definition=task_definition,
+            running_count=running_count,
+        )
+        for attachment in attachments
+    ]
+
+    healthy_total = sum(r["counts"].get("healthy", 0) for r in enriched_groups)
+    unhealthy_total = sum(r["counts"].get("unhealthy", 0) for r in enriched_groups)
+    initial_total = sum(r["counts"].get("initial", 0) for r in enriched_groups)
     rollout_active = is_rollout_in_progress(service)
+
+    attachment_failures = [
+        issue
+        for group in enriched_groups
+        for issue in group.get("attachment_issues", [])
+    ]
+    all_attached = all(group.get("attachment_ok") for group in enriched_groups)
+
+    attached_names = ", ".join(group.get("name", "unknown") for group in enriched_groups)
+    attachment_summary = f"{len(enriched_groups)} target group(s): {attached_names}"
+    if all_attached:
+        attachment_summary += " — attachments look correct"
+    else:
+        attachment_summary += " — attachment problems detected"
 
     base = {
         "healthy_targets": healthy_total,
         "unhealthy_targets": unhealthy_total,
         "initial_targets": initial_total,
-        "target_groups": target_group_results,
+        "target_groups": enriched_groups,
+        "attachment_summary": attachment_summary,
+        "attachment_ok": all_attached,
     }
+
+    if attachment_failures and fail_on_unhealthy_targets:
+        return {
+            **base,
+            "status": STATUS_FAIL,
+            "message": attachment_failures[0],
+        }
 
     if unhealthy_total > 0 and fail_on_unhealthy_targets:
         return {
             **base,
             "status": STATUS_FAIL,
             "message": f"Unhealthy targets detected: {unhealthy_total}",
+        }
+
+    if not all_attached:
+        return {
+            **base,
+            "status": STATUS_FAIL,
+            "message": attachment_failures[0] if attachment_failures else "Target group attachment issue",
         }
 
     if rollout_active and initial_total > 0 and healthy_total == 0 and unhealthy_total == 0:
@@ -537,7 +738,7 @@ def evaluate_target_health(
     return {
         **base,
         "status": STATUS_PASS,
-        "message": f"Target group health looks good: {', '.join(parts)}",
+        "message": f"Target groups attached correctly: {', '.join(parts)}",
     }
 
 
@@ -620,7 +821,7 @@ def inspect_service(
 
         if checks_config.get("include_task_definition", True) or checks_config.get(
             "include_connectivity_diagram", True
-        ):
+        ) or checks_config.get("include_target_group_health", True):
             task_definition = describe_task_definition(
                 ecs_client, service["taskDefinition"]
             )
@@ -646,6 +847,7 @@ def inspect_service(
                 elbv2_client,
                 checks_config.get("fail_on_unhealthy_targets", True),
                 max_workers,
+                task_definition,
             )
 
         if checks_config.get("include_connectivity_diagram", True):
@@ -831,6 +1033,8 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
             lines.append(f"  Load balancer: {target_health.get('message', 'OK')}")
         else:
             lines.append(f"  Load balancer: {target_health.get('message', 'issue detected')}")
+        if target_health.get("attachment_summary"):
+            lines.append(f"  Target groups: {target_health['attachment_summary']}")
 
     images = checks.get("task_definition", {}).get("container_images", [])
     if images:
@@ -1020,7 +1224,25 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "target_group_health": {
                         "status": STATUS_PASS,
-                        "message": "Target group health looks good: healthy=2, unhealthy=0",
+                        "message": "Target groups attached correctly: healthy=2, unhealthy=0",
+                        "attachment_ok": True,
+                        "attachment_summary": "1 target group(s): tg-orders — attachments look correct",
+                        "target_groups": [
+                            {
+                                "name": "tg-orders",
+                                "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-orders/abc123",
+                                "ecs_container_name": "orders-api",
+                                "ecs_container_port": 8080,
+                                "port": 8080,
+                                "protocol": "HTTP",
+                                "target_type": "ip",
+                                "load_balancer_count": 1,
+                                "registered_targets": 2,
+                                "attachment_ok": True,
+                                "attachment_issues": [],
+                                "counts": {"healthy": 2, "unhealthy": 0, "initial": 0},
+                            }
+                        ],
                     },
                     "task_definition": {
                         "status": STATUS_PASS,
@@ -1042,18 +1264,20 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "connectivity": {
                         "status": STATUS_PASS,
-                        "summary": "Route 53 → Load Balancer → ECS → backend(s) → ECR",
+                        "summary": "Route 53 → Load Balancer → Target Group → ECS → backend(s) → ECR",
                         "entrypoint": "r53_api_example_com",
                         "nodes": [
                             {"id": "r53_api_example_com", "type": "route53", "label": "api.example.com", "detail": "DNS record"},
                             {"id": "alb_dev_apps", "type": "alb", "label": "dev-apps-alb", "detail": "APPLICATION · internet-facing"},
+                            {"id": "tg_tg_orders", "type": "target_group", "label": "tg-orders", "detail": "HTTP · 8080 → orders-api:8080"},
                             {"id": "ecs_orders_api", "type": "ecs_service", "label": "orders-api", "detail": "dev-apps-cluster"},
                             {"id": "rds_orders_db", "type": "rds", "label": "RDS: orders-db", "detail": "inferred backend"},
                             {"id": "ecr_orders_api", "type": "ecr", "label": "orders-api", "detail": "container image"},
                         ],
                         "edges": [
                             {"from": "r53_api_example_com", "to": "alb_dev_apps", "label": "alias"},
-                            {"from": "alb_dev_apps", "to": "ecs_orders_api", "label": "routes traffic"},
+                            {"from": "alb_dev_apps", "to": "tg_tg_orders", "label": "forwards to"},
+                            {"from": "tg_tg_orders", "to": "ecs_orders_api", "label": "registers tasks"},
                             {"from": "ecs_orders_api", "to": "rds_orders_db", "label": "connects"},
                             {"from": "ecr_orders_api", "to": "ecs_orders_api", "label": "pulls image"},
                         ],
@@ -1084,6 +1308,21 @@ def build_sample_report() -> Dict[str, Any]:
                     "target_group_health": {
                         "status": STATUS_WARN,
                         "message": "Targets still registering during deployment: initial=1",
+                        "attachment_ok": True,
+                        "attachment_summary": "1 target group(s): tg-agents — attachments look correct",
+                        "target_groups": [
+                            {
+                                "name": "tg-agents",
+                                "ecs_container_name": "agents-service",
+                                "ecs_container_port": 8080,
+                                "port": 8080,
+                                "protocol": "HTTP",
+                                "registered_targets": 1,
+                                "attachment_ok": True,
+                                "attachment_issues": [],
+                                "counts": {"healthy": 0, "unhealthy": 0, "initial": 1},
+                            }
+                        ],
                     },
                     "task_definition": {
                         "status": STATUS_PASS,
@@ -1105,15 +1344,17 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "connectivity": {
                         "status": STATUS_PASS,
-                        "summary": "Load Balancer → ECS → ECR",
+                        "summary": "Load Balancer → Target Group → ECS → ECR",
                         "entrypoint": "alb_dev_internal",
                         "nodes": [
                             {"id": "alb_dev_internal", "type": "alb", "label": "dev-internal-alb", "detail": "APPLICATION · internal"},
+                            {"id": "tg_tg_agents", "type": "target_group", "label": "tg-agents", "detail": "HTTP · 8080 → agents-service:8080"},
                             {"id": "ecs_agents_service", "type": "ecs_service", "label": "agents-service", "detail": "dev-apps-cluster"},
                             {"id": "ecr_agents_service", "type": "ecr", "label": "agents-service", "detail": "container image"},
                         ],
                         "edges": [
-                            {"from": "alb_dev_internal", "to": "ecs_agents_service", "label": "routes traffic"},
+                            {"from": "alb_dev_internal", "to": "tg_tg_agents", "label": "forwards to"},
+                            {"from": "tg_tg_agents", "to": "ecs_agents_service", "label": "registers tasks"},
                             {"from": "ecr_agents_service", "to": "ecs_agents_service", "label": "pulls image"},
                         ],
                         "notes": [],
@@ -1142,7 +1383,22 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "target_group_health": {
                         "status": STATUS_FAIL,
-                        "message": "Unhealthy targets detected: 1",
+                        "message": "1 unhealthy target(s) registered",
+                        "attachment_ok": False,
+                        "attachment_summary": "1 target group(s): tg-payments — attachment problems detected",
+                        "target_groups": [
+                            {
+                                "name": "tg-payments",
+                                "ecs_container_name": "payments-api",
+                                "ecs_container_port": 8080,
+                                "port": 8080,
+                                "protocol": "HTTP",
+                                "registered_targets": 2,
+                                "attachment_ok": False,
+                                "attachment_issues": ["1 unhealthy target(s) registered"],
+                                "counts": {"healthy": 1, "unhealthy": 1, "initial": 0},
+                            }
+                        ],
                     },
                     "task_definition": {
                         "status": STATUS_PASS,
@@ -1168,18 +1424,20 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "connectivity": {
                         "status": STATUS_PASS,
-                        "summary": "Internet → Load Balancer → ECS → backend(s) → ECR",
+                        "summary": "Internet → Load Balancer → Target Group → ECS → backend(s) → ECR",
                         "entrypoint": "internet_payments_api",
                         "nodes": [
                             {"id": "internet_payments_api", "type": "internet", "label": "Internet", "detail": "public load balancer"},
                             {"id": "alb_payments", "type": "alb", "label": "payments-alb", "detail": "APPLICATION · internet-facing"},
+                            {"id": "tg_tg_payments", "type": "target_group", "label": "tg-payments", "detail": "HTTP · 8080 → payments-api:8080"},
                             {"id": "ecs_payments_api", "type": "ecs_service", "label": "payments-api", "detail": "dev-apps-cluster"},
                             {"id": "rds_payments_db", "type": "rds", "label": "RDS: payments-db", "detail": "inferred backend"},
                             {"id": "ecr_payments_api", "type": "ecr", "label": "payments-api", "detail": "container image"},
                         ],
                         "edges": [
                             {"from": "internet_payments_api", "to": "alb_payments", "label": "HTTPS/HTTP"},
-                            {"from": "alb_payments", "to": "ecs_payments_api", "label": "routes traffic"},
+                            {"from": "alb_payments", "to": "tg_tg_payments", "label": "forwards to"},
+                            {"from": "tg_tg_payments", "to": "ecs_payments_api", "label": "registers tasks"},
                             {"from": "ecs_payments_api", "to": "rds_payments_db", "label": "connects"},
                             {"from": "ecr_payments_api", "to": "ecs_payments_api", "label": "pulls image"},
                         ],

@@ -25,6 +25,81 @@ No config file required for a single check.
 
 ---
 
+## Features
+
+Everything this repo provides today (v0.6.2):
+
+### Application health checks
+
+- **Task counts** — running vs desired vs pending; optional expected desired count per service
+- **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
+- **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
+- **Container image** — image URI/tag from the live task definition (what is actually deployed)
+- **Pass / warn / fail** — per-check and per-service status with plain-language summaries
+
+### Load balancer and target groups
+
+- **Target group detection** — finds target groups attached to the ECS service
+- **Attachment validation** — target group exists, is attached to ALB/NLB, ECS container name/port matches the task definition
+- **Target health** — healthy, unhealthy, and registering target counts
+- **Classic ELB notice** — warns when a service uses a classic load balancer (ALB/NLB required for full TG checks)
+
+### Stable tasks and rollback
+
+- **Last 3 stable task definitions** — recent known-good revisions per service (configurable limit)
+- **Discovery sources** — completed deployments, steady-state events, cleanly stopped tasks
+- **Rollback commands** — copy-paste `aws ecs update-service` for each stable revision
+- **Image per revision** — see which ECR tag belonged to each stable build
+
+### Connectivity auto-detection
+
+Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
+
+- **Route 53** — DNS records pointing at the load balancer
+- **ALB / NLB** — load balancer name, scheme (public/internal)
+- **Target groups** — shown between load balancer and ECS in the diagram
+- **Cloud Map / Service Connect** — service registry attachments
+- **Inferred backends** — RDS, DynamoDB, ElastiCache, DocumentDB, and other AWS endpoints parsed from container env vars and secrets
+- **ECR** — container image source
+- **Internet** — entry point for internet-facing load balancers
+
+### CLI and configuration
+
+- **Zero config** — `--cluster` + `--service` is enough for a one-off check
+- **Multiple services** — repeat `--service` or use `--all-services` for an entire cluster
+- **Optional JSON config** — minimal single-cluster config or advanced multi-cluster setup
+- **Critical services** — mark services as critical in config; report tracks critical failures separately
+- **Account safety** — refuse to run if connected to the wrong AWS account (`--account` or config)
+- **Region and profile** — `--region`, `--profile`, or config; region auto-detected from AWS CLI when omitted
+- **Parallel checks** — batched and parallel AWS API calls for faster multi-service runs
+
+### Output formats
+
+| Format | Use case |
+|--------|----------|
+| **Plain CLI** | Default — human-readable HEALTHY / WARNING / UNHEALTHY summary |
+| **`--verbose`** | Full technical detail including rollback commands and event lists |
+| **`--json`** | Machine-readable report for CI/CD pipelines and automation |
+| **`--html`** | Self-contained **ECS Service Health Report** (React, no external assets after export) |
+
+### HTML Service Health Report
+
+- Overall summary (passed / warnings / failed / critical failed)
+- Services grouped by cluster with status badges
+- Task counts, deployments, load balancer and target group details
+- Stable tasks section with rollback commands
+- Container images and recent events
+- Interactive connectivity flow diagram
+- Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
+
+### CI/CD and safety
+
+- **Exit codes** — `0` pass, `1` warnings, `2` failures (script-friendly)
+- **Read-only IAM** — no writes to ECS, load balancers, or Route 53; inspect only
+- **No agents** — runs from your laptop, CI runner, or CloudShell with AWS credentials
+
+---
+
 ## Quick start
 
 **1. Install**

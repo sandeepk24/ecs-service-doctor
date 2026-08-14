@@ -5,10 +5,10 @@ interface Props {
 }
 
 const cards = [
-  { key: "total_services", label: "Services", tone: "neutral" },
+  { key: "total_services", label: "Checked", tone: "neutral" },
   { key: "passed", label: "Healthy", tone: "pass" },
-  { key: "warnings", label: "Warnings", tone: "warn" },
-  { key: "failed", label: "Failed", tone: "fail" },
+  { key: "warnings", label: "Attention", tone: "warn" },
+  { key: "failed", label: "Unhealthy", tone: "fail" },
 ] as const;
 
 export function SummaryGrid({ summary }: Props) {

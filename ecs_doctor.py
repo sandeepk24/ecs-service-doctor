@@ -50,7 +50,7 @@ from notifications import (
 from topology import build_route53_index, discover_connectivity
 
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1697,8 +1697,8 @@ def build_sample_report() -> Dict[str, Any]:
             "expected_account_id": "123456789012",
         },
         "summary": {
-            "total_services": 3,
-            "passed": 1,
+            "total_services": 7,
+            "passed": 5,
             "warnings": 1,
             "failed": 1,
             "critical_failed": 1,
@@ -2064,8 +2064,85 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                 },
             },
+            *_sample_healthy_services(),
         ],
     }
+
+
+def _sample_healthy_services() -> List[Dict[str, Any]]:
+    names = [
+        ("catalog-api", "catalog-api", 3),
+        ("search-api", "search-api", 2),
+        ("billing-api", "billing-api", 2),
+        ("notifications-worker", "notifications-worker", 1),
+    ]
+    services: List[Dict[str, Any]] = []
+    for name, image, desired in names:
+        services.append(
+            {
+                "cluster": "dev-apps-cluster",
+                "service": name,
+                "critical": False,
+                "status": STATUS_PASS,
+                "task_definition": (
+                    f"arn:aws:ecs:us-east-1:123456789012:task-definition/{name}:12"
+                ),
+                "launch_type": "FARGATE",
+                "platform_version": "LATEST",
+                "checks": {
+                    "task_counts": {
+                        "status": STATUS_PASS,
+                        "message": (
+                            f"Task counts look stable: desired={desired}, "
+                            f"running={desired}, pending=0"
+                        ),
+                        "desired": desired,
+                        "running": desired,
+                        "pending": 0,
+                    },
+                    "deployments": {
+                        "status": STATUS_PASS,
+                        "message": "Deployment state looks stable",
+                    },
+                    "target_group_health": {
+                        "status": STATUS_PASS,
+                        "message": (
+                            f"Target groups attached correctly: healthy={desired}, unhealthy=0"
+                        ),
+                    },
+                    "http_health": {
+                        "status": STATUS_PASS,
+                        "message": f"HTTP 200 from https://{name}.example.com/health (30ms)",
+                        "url": f"https://{name}.example.com/health",
+                        "http_status": 200,
+                        "expected_status": 200,
+                        "elapsed_ms": 30,
+                    },
+                    "task_definition": {
+                        "status": STATUS_PASS,
+                        "container_images": [
+                            {
+                                "container": name,
+                                "image": (
+                                    "123456789012.dkr.ecr.us-east-1.amazonaws.com/"
+                                    f"{image}:v1.0.0"
+                                ),
+                            }
+                        ],
+                    },
+                    "recent_events": {
+                        "status": STATUS_PASS,
+                        "events": [
+                            {
+                                "created_at": "2026-08-07T19:58:00+00:00",
+                                "message": f"(service {name}) has reached a steady state.",
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+    return services
 
 
 def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:

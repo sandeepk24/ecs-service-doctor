@@ -94,12 +94,10 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 
 ### HTML Service Health Report
 
-- Overall summary (passed / warnings / failed / critical failed)
-- Services grouped by cluster with status badges
-- Task counts, deployments, load balancer and target group details
-- Stable tasks section with rollback commands
-- Container images and recent events
-- Interactive connectivity flow diagram
+- Executive snapshot in one sentence, plus counts for healthy / attention / unhealthy
+- Compact fleet table (one row per service) so 7+ services stay scannable
+- Details stay collapsed until a row is opened
+- Engineering drill-down: target groups, known-good versions, connectivity, events
 - Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### CI/CD and safety
@@ -402,16 +400,14 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 
 ![ECS Service Health Report sample](examples/ecs_report.sample.png)
 
+The HTML report is built for **leadership scan, then drill-down**:
+
+- One-sentence executive snapshot (healthy vs needs attention)
+- Attention list of only the services that are not healthy
+- Compact fleet table: status, capacity, app HTTP, traffic
+- Engineering detail (target groups, rollback, connectivity, events) stays collapsed until you click a row
+
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
-
-The report includes:
-
-- Overall health summary across clusters
-- Services grouped by cluster with pass/warn/fail status
-- Task counts, deployment status, and per–target-group attachment details
-- Last 3 stable task definitions per service with rollback commands
-- Container images and recent ECS events
-- Auto-detected connectivity diagram (Route 53, ALB/NLB, target groups, Cloud Map, inferred DB/cache backends, ECR)
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 

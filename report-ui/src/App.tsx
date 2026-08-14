@@ -1,18 +1,37 @@
+import { useMemo, useState } from "react";
 import {
   formatTimestamp,
   groupByCluster,
   loadReport,
   overallStatus,
+  sortBySeverity,
   statusLabel,
 } from "./utils";
 import { StatusBadge } from "./components/StatusBadge";
 import { SummaryGrid } from "./components/SummaryGrid";
+import { ExecutiveBrief } from "./components/ExecutiveBrief";
 import { ServiceCard } from "./components/ServiceCard";
 
 export default function App() {
   const report = loadReport();
   const clusters = groupByCluster(report.results);
   const overall = overallStatus(report);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
+  const firstIssue = useMemo(() => {
+    const issue = sortBySeverity(report.results).find((item) => item.status !== "PASS");
+    return issue ? `${issue.cluster}::${issue.service}` : null;
+  }, [report.results]);
+
+  const selectService = (key: string) => {
+    setOpenKey(key);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`svc-${key}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  };
 
   return (
     <div className="page">
@@ -56,6 +75,7 @@ export default function App() {
         </header>
 
         <SummaryGrid summary={report.summary} />
+        <ExecutiveBrief report={report} onSelect={selectService} />
 
         {report.results.length === 0 ? (
           <section className="empty">No services were checked.</section>
@@ -64,20 +84,39 @@ export default function App() {
             <section key={cluster} className="cluster-panel">
               <div className="cluster-head">
                 <h2>{cluster}</h2>
-                <span>{services.length} service(s)</span>
+                <span>{services.length} services · click a row for details</span>
+              </div>
+              <div className="fleet-legend">
+                <span>Service</span>
+                <span>Status</span>
+                <span>Capacity</span>
+                <span>App</span>
+                <span>Traffic</span>
+                <span>Snapshot</span>
               </div>
               <div className="service-grid">
-                {services.map((service) => (
-                  <ServiceCard key={`${cluster}-${service.service}`} item={service} />
-                ))}
+                {sortBySeverity(services).map((service) => {
+                  const key = `${cluster}::${service.service}`;
+                  return (
+                    <div id={`svc-${key}`} key={key}>
+                      <ServiceCard
+                        item={service}
+                        expanded={openKey === key || (openKey === null && firstIssue === key)}
+                        onToggle={() =>
+                          setOpenKey((current) => (current === key ? "" : key))
+                        }
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </section>
           ))
         )}
 
         <footer className="footer">
-          ECS Health Report v{report.version} · Self-contained export — no external
-          assets required
+          ECS Health Report v{report.version} · One-page snapshot — expand a service
+          for engineering detail
         </footer>
       </main>
     </div>

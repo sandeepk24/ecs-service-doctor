@@ -8,14 +8,36 @@
     "include_recent_events": true,
     "recent_event_limit": 10,
     "fail_on_unhealthy_targets": true,
-    "warn_on_multiple_active_deployments": true
+    "warn_on_multiple_active_deployments": true,
+    "include_http_health": true,
+    "http_expected_status": 200,
+    "http_health_path": "/health",
+    "http_timeout_seconds": 5,
+    "include_stable_task_history": true,
+    "stable_task_limit": 3
+  },
+  "notifications": {
+    "on_fail": true,
+    "on_warn": false,
+    "slack_webhook_url": "https://hooks.slack.com/services/REPLACE/ME",
+    "sns_topic_arn": "arn:aws:sns:us-west-2:987654321098:ecs-health-alerts"
   },
   "clusters": [
     {
       "name": "prod-edge-cluster",
       "services": [
-        { "name": "edge-gateway", "expected_desired_count": 4, "critical": true },
-        { "name": "auth-service", "expected_desired_count": 3, "critical": true }
+        {
+          "name": "edge-gateway",
+          "expected_desired_count": 4,
+          "critical": true,
+          "health_check_url": "https://edge.example.com/health"
+        },
+        {
+          "name": "auth-service",
+          "expected_desired_count": 3,
+          "critical": true,
+          "health_check_url": "https://auth.example.com/health"
+        }
       ]
     },
     {

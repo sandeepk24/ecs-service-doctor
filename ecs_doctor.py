@@ -15,6 +15,8 @@ Checks:
 - task definition image
 - load balancer target group health
 - recent stable task definitions for rollback
+- HTTP endpoint health (expect 200) and notifications
+- continuous monitoring with --interval
 
 Usage:
     python ecs_doctor.py --cluster my-cluster --service my-api
@@ -28,18 +30,27 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import ClientError, ProfileNotFound
 
+from notifications import (
+    dispatch_notifications,
+    fingerprint_unhealthy,
+    should_notify,
+)
 from topology import build_route53_index, discover_connectivity
 
 
-VERSION = "0.6.2"
+VERSION = "0.7.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -111,6 +122,7 @@ def normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     config: Dict[str, Any] = {
         "aws": dict(raw.get("aws", {})),
         "checks": dict(raw.get("checks", {})),
+        "notifications": dict(raw.get("notifications", {})),
         "clusters": [],
     }
 
@@ -162,6 +174,7 @@ def build_config_from_cli(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "aws": aws,
         "checks": {},
+        "notifications": {},
         "clusters": [{"name": args.cluster, "services": []}],
         "_cli_all_services": args.all_services,
         "_cli_service_names": args.service or [],
@@ -692,6 +705,140 @@ def enrich_stable_task_candidates(
     return enriched
 
 
+def parse_interval(value: str) -> int:
+    """Parse interval like 10m, 30s, 1h into seconds."""
+    text = value.strip().lower()
+    match = re.fullmatch(r"(\d+)\s*([smhd]?)", text)
+    if not match:
+        raise SystemExit(
+            f"Invalid --interval '{value}'. Use formats like 30s, 10m, 1h."
+        )
+
+    amount = int(match.group(1))
+    unit = match.group(2) or "m"
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    seconds = amount * multipliers[unit]
+    if seconds < 30:
+        raise SystemExit("Interval must be at least 30 seconds.")
+    return seconds
+
+
+def resolve_http_health_url(
+    service_config: Dict[str, Any],
+    checks_config: Dict[str, Any],
+    connectivity: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    explicit = (
+        service_config.get("health_check_url")
+        or service_config.get("url")
+        or checks_config.get("health_check_url")
+    )
+    if explicit:
+        return str(explicit)
+
+    path = service_config.get("health_check_path") or checks_config.get(
+        "http_health_path", "/health"
+    )
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    scheme = service_config.get("health_check_scheme") or checks_config.get(
+        "http_health_scheme", "https"
+    )
+
+    hosts: List[str] = []
+    if connectivity:
+        hosts.extend(connectivity.get("http_hosts") or [])
+        for node in connectivity.get("nodes", []):
+            if node.get("type") == "route53" and node.get("label"):
+                hosts.append(node["label"])
+
+    host = next((item for item in hosts if item), None)
+    if not host:
+        return None
+
+    return f"{scheme}://{host}{path}"
+
+
+def check_http_health(
+    url: str,
+    *,
+    expected_status: int = 200,
+    timeout_seconds: float = 5.0,
+    method: str = "GET",
+) -> Dict[str, Any]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {
+            "status": STATUS_FAIL,
+            "message": f"Invalid health check URL: {url}",
+            "url": url,
+            "expected_status": expected_status,
+        }
+
+    request = urllib.request.Request(
+        url,
+        method=method.upper(),
+        headers={"User-Agent": f"ecs-service-doctor/{VERSION}"},
+    )
+
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            status_code = int(getattr(response, "status", 200))
+            # Drain a small amount so connections close cleanly.
+            response.read(1024)
+    except urllib.error.HTTPError as exc:
+        status_code = int(exc.code)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if status_code == expected_status:
+            return {
+                "status": STATUS_PASS,
+                "message": f"HTTP {status_code} from {url} ({elapsed_ms}ms)",
+                "url": url,
+                "http_status": status_code,
+                "expected_status": expected_status,
+                "elapsed_ms": elapsed_ms,
+            }
+        return {
+            "status": STATUS_FAIL,
+            "message": f"HTTP {status_code} from {url} (expected {expected_status})",
+            "url": url,
+            "http_status": status_code,
+            "expected_status": expected_status,
+            "elapsed_ms": elapsed_ms,
+        }
+    except Exception as exc:  # noqa: BLE001
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "status": STATUS_FAIL,
+            "message": f"HTTP check failed for {url}: {exc}",
+            "url": url,
+            "expected_status": expected_status,
+            "elapsed_ms": elapsed_ms,
+        }
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if status_code == expected_status:
+        return {
+            "status": STATUS_PASS,
+            "message": f"HTTP {status_code} from {url} ({elapsed_ms}ms)",
+            "url": url,
+            "http_status": status_code,
+            "expected_status": expected_status,
+            "elapsed_ms": elapsed_ms,
+        }
+
+    return {
+        "status": STATUS_FAIL,
+        "message": f"HTTP {status_code} from {url} (expected {expected_status})",
+        "url": url,
+        "http_status": status_code,
+        "expected_status": expected_status,
+        "elapsed_ms": elapsed_ms,
+    }
+
+
 def evaluate_stable_task_history(
     ecs_client,
     cluster_name: str,
@@ -1145,6 +1292,34 @@ def inspect_service(
                 route53_index=route53_index or {},
             )
 
+        if checks_config.get("include_http_health", True):
+            connectivity = result["checks"].get("connectivity")
+            health_url = resolve_http_health_url(
+                service_config,
+                checks_config,
+                connectivity,
+            )
+            if health_url:
+                result["checks"]["http_health"] = check_http_health(
+                    health_url,
+                    expected_status=int(
+                        service_config.get("expected_http_status")
+                        or checks_config.get("http_expected_status", 200)
+                    ),
+                    timeout_seconds=float(
+                        checks_config.get("http_timeout_seconds", 5)
+                    ),
+                    method=str(checks_config.get("http_method", "GET")),
+                )
+            elif service_config.get("health_check_url") or checks_config.get(
+                "require_http_health"
+            ):
+                result["checks"]["http_health"] = {
+                    "status": STATUS_FAIL,
+                    "message": "HTTP health check enabled but no URL could be resolved",
+                    "expected_status": checks_config.get("http_expected_status", 200),
+                }
+
         if checks_config.get("include_stable_task_history", True):
             stable_limit = checks_config.get("stable_task_limit", 3)
             result["checks"]["stable_tasks"] = evaluate_stable_task_history(
@@ -1330,6 +1505,13 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         if target_health.get("attachment_summary"):
             lines.append(f"  Target groups: {target_health['attachment_summary']}")
 
+    http_health = checks.get("http_health")
+    if http_health:
+        if http_health.get("status") == STATUS_PASS:
+            lines.append(f"  HTTP: {http_health.get('message', 'OK')}")
+        else:
+            lines.append(f"  HTTP: {http_health.get('message', 'not 200')}")
+
     stable_tasks = checks.get("stable_tasks", {})
     for task in stable_tasks.get("stable_tasks", [])[:3]:
         label = task.get("task_definition", "unknown")
@@ -1446,6 +1628,10 @@ def print_human_report(report: Dict[str, Any]) -> None:
         if target_health:
             print(f"  Target Health   : [{target_health['status']}] {target_health['message']}")
 
+        http_health = checks.get("http_health")
+        if http_health:
+            print(f"  HTTP Health     : [{http_health['status']}] {http_health['message']}")
+
         stable_tasks = checks.get("stable_tasks")
         if stable_tasks and stable_tasks.get("stable_tasks"):
             print(f"  Stable Tasks    : [{stable_tasks['status']}] {stable_tasks['message']}")
@@ -1559,6 +1745,14 @@ def build_sample_report() -> Dict[str, Any]:
                                 "counts": {"healthy": 2, "unhealthy": 0, "initial": 0},
                             }
                         ],
+                    },
+                    "http_health": {
+                        "status": STATUS_PASS,
+                        "message": "HTTP 200 from https://api.example.com/health (42ms)",
+                        "url": "https://api.example.com/health",
+                        "http_status": 200,
+                        "expected_status": 200,
+                        "elapsed_ms": 42,
                     },
                     "task_definition": {
                         "status": STATUS_PASS,
@@ -1781,6 +1975,14 @@ def build_sample_report() -> Dict[str, Any]:
                             }
                         ],
                     },
+                    "http_health": {
+                        "status": STATUS_FAIL,
+                        "message": "HTTP 503 from https://payments.example.com/health (expected 200)",
+                        "url": "https://payments.example.com/health",
+                        "http_status": 503,
+                        "expected_status": 200,
+                        "elapsed_ms": 88,
+                    },
                     "task_definition": {
                         "status": STATUS_PASS,
                         "container_images": [
@@ -1866,6 +2068,99 @@ def build_sample_report() -> Dict[str, Any]:
     }
 
 
+def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
+    checks = config.setdefault("checks", {})
+    notifications = config.setdefault("notifications", {})
+
+    if getattr(args, "health_url", None):
+        checks["health_check_url"] = args.health_url
+        checks["include_http_health"] = True
+        # Apply to every listed service when using CLI URL.
+        for cluster in config.get("clusters", []):
+            for service in cluster.get("services", []):
+                service.setdefault("health_check_url", args.health_url)
+
+    if getattr(args, "health_path", None):
+        checks["http_health_path"] = args.health_path
+        checks["include_http_health"] = True
+
+    if getattr(args, "expected_http_status", None) is not None:
+        checks["http_expected_status"] = args.expected_http_status
+
+    if getattr(args, "notify_slack", None):
+        notifications["slack_webhook_url"] = args.notify_slack
+    if getattr(args, "notify_webhook", None):
+        notifications["webhook_url"] = args.notify_webhook
+    if getattr(args, "notify_sns", None):
+        notifications["sns_topic_arn"] = args.notify_sns
+    if getattr(args, "notify_on_warn", False):
+        notifications["on_warn"] = True
+
+    return config
+
+
+def run_once(
+    config: Dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    last_fingerprint: Optional[str] = None,
+) -> Tuple[Dict[str, Any], int, Optional[str]]:
+    report = inspect_all(config)
+
+    if args.html:
+        write_html_report(report, args.html)
+        print(f"HTML report saved to {args.html}")
+
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    elif args.verbose:
+        print_human_report(report)
+    else:
+        print_simple_report(report)
+
+    notifications_config = config.get("notifications", {})
+    fingerprint = fingerprint_unhealthy(report)
+    notify_now = should_notify(
+        report,
+        on_fail=notifications_config.get("on_fail", True),
+        on_warn=notifications_config.get("on_warn", False),
+    )
+
+    # Avoid spamming the same alert every interval tick.
+    if notify_now and fingerprint and fingerprint == last_fingerprint:
+        print("Notifications: skipped (same unhealthy fingerprint as last run)")
+        notify_now = False
+
+    if notify_now and (
+        notifications_config.get("slack_webhook_url")
+        or notifications_config.get("webhook_url")
+        or notifications_config.get("sns_topic_arn")
+    ):
+        session = create_session(config)
+        results = dispatch_notifications(report, notifications_config, session=session)
+        for item in results:
+            channel = item.get("channel", "notify")
+            if item.get("ok"):
+                print(f"Notification sent via {channel}")
+            else:
+                print(
+                    f"Notification failed via {channel}: {item.get('error') or item.get('status')}",
+                    file=sys.stderr,
+                )
+        report["notifications"] = results
+    elif notify_now:
+        print(
+            "Services unhealthy, but no notification channel configured "
+            "(use --notify-slack, --notify-webhook, or --notify-sns)."
+        )
+
+    return report, compute_exit_code(report), fingerprint if should_notify(
+        report,
+        on_fail=notifications_config.get("on_fail", True),
+        on_warn=notifications_config.get("on_warn", False),
+    ) else None
+
+
 def write_html_report(report: Dict[str, Any], path: str) -> None:
     content = render_html_report(report)
     with open(path, "w", encoding="utf-8") as file:
@@ -1881,6 +2176,10 @@ Quick start (no config file):
   %(prog)s --cluster my-cluster --service my-api
   %(prog)s --cluster my-cluster --service api --service worker
   %(prog)s --cluster my-cluster --all-services
+
+Continuous monitoring with HTTP 200 alerts:
+  %(prog)s --config config.json --interval 10m --notify-slack https://hooks.slack.com/...
+  %(prog)s -c my-cluster -s my-api --health-url https://api.example.com/health --interval 10m
 
 With a config file:
   %(prog)s --config config.json
@@ -1949,6 +2248,57 @@ With a config file:
     )
 
     parser.add_argument(
+        "--interval",
+        metavar="DURATION",
+        help="Run continuously (e.g. 10m, 30s, 1h). Ctrl+C to stop.",
+    )
+
+    parser.add_argument(
+        "--health-url",
+        metavar="URL",
+        help="HTTP health check URL that must return 200 (or --expected-http-status)",
+    )
+
+    parser.add_argument(
+        "--health-path",
+        metavar="PATH",
+        default=None,
+        help="Health path appended to auto-detected host (default: /health)",
+    )
+
+    parser.add_argument(
+        "--expected-http-status",
+        type=int,
+        default=None,
+        metavar="CODE",
+        help="Expected HTTP status code (default: 200)",
+    )
+
+    parser.add_argument(
+        "--notify-slack",
+        metavar="WEBHOOK_URL",
+        help="Slack incoming webhook URL for unhealthy alerts",
+    )
+
+    parser.add_argument(
+        "--notify-webhook",
+        metavar="URL",
+        help="Generic JSON webhook URL for unhealthy alerts",
+    )
+
+    parser.add_argument(
+        "--notify-sns",
+        metavar="TOPIC_ARN",
+        help="AWS SNS topic ARN for unhealthy alerts",
+    )
+
+    parser.add_argument(
+        "--notify-on-warn",
+        action="store_true",
+        help="Also notify on WARN status (default: FAIL only)",
+    )
+
+    parser.add_argument(
         "--version",
         action="version",
         version=f"ecs-service-doctor {VERSION}",
@@ -1957,21 +2307,29 @@ With a config file:
     args = parser.parse_args()
 
     try:
-        config = resolve_input_config(args)
-        report = inspect_all(config)
+        config = apply_cli_overrides(resolve_input_config(args), args)
 
-        if args.html:
-            write_html_report(report, args.html)
-            print(f"HTML report saved to {args.html}")
+        if not args.interval:
+            _report, exit_code, _fingerprint = run_once(config, args)
+            return exit_code
 
-        if args.json:
-            print(json.dumps(report, indent=2, default=str))
-        elif args.verbose:
-            print_human_report(report)
-        else:
-            print_simple_report(report)
-
-        return compute_exit_code(report)
+        interval_seconds = parse_interval(args.interval)
+        print(
+            f"Continuous monitoring every {args.interval} "
+            f"({interval_seconds}s). Press Ctrl+C to stop."
+        )
+        last_fingerprint: Optional[str] = None
+        last_exit = 0
+        while True:
+            print()
+            print(f"=== Check at {utc_now()} ===")
+            _report, last_exit, last_fingerprint = run_once(
+                config,
+                args,
+                last_fingerprint=last_fingerprint,
+            )
+            print(f"Next check in {args.interval}...")
+            time.sleep(interval_seconds)
 
     except ClientError as exc:
         print(f"AWS error: {exc}", file=sys.stderr)

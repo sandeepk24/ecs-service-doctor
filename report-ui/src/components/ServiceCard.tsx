@@ -233,6 +233,11 @@ export function ServiceCard({ item }: Props) {
               status={checks.target_group_health?.status}
               message={checks.target_group_health?.message}
             />
+            <CheckRow
+              label="HTTP"
+              status={checks.http_health?.status}
+              message={checks.http_health?.message}
+            />
           </div>
 
           <TargetGroupSection targetHealth={checks.target_group_health} />

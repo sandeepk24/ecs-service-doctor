@@ -427,6 +427,15 @@ def build_topology(
     if any(node["type"] == NODE_ECR for node in nodes):
         summary_parts.append("ECR")
 
+    http_hosts: List[str] = []
+    for node in nodes:
+        if node.get("type") == NODE_ROUTE53 and node.get("label"):
+            http_hosts.append(node["label"])
+    for load_balancer in load_balancers:
+        dns_name = load_balancer.get("dns_name")
+        if dns_name and dns_name not in http_hosts:
+            http_hosts.append(dns_name)
+
     return {
         "status": "PASS",
         "summary": " → ".join(summary_parts) if summary_parts else "ECS only",
@@ -434,6 +443,7 @@ def build_topology(
         "nodes": nodes,
         "edges": edges,
         "notes": notes,
+        "http_hosts": http_hosts,
         "mermaid": build_mermaid(nodes, edges),
     }
 

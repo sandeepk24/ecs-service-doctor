@@ -27,7 +27,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (v0.6.2):
+Everything this repo provides today (v0.7.0):
 
 ### Application health checks
 
@@ -35,7 +35,17 @@ Everything this repo provides today (v0.6.2):
 - **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
 - **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
 - **Container image** — image URI/tag from the live task definition (what is actually deployed)
+- **HTTP endpoint check** — optional/auto URL must return **HTTP 200** (configurable); fails the service when not 200
 - **Pass / warn / fail** — per-check and per-service status with plain-language summaries
+
+### Continuous monitoring and alerts
+
+- **`--interval 10m`** — re-check on a schedule until you stop the process (also `30s`, `1h`)
+- **Slack webhook** — `--notify-slack` or config `notifications.slack_webhook_url`
+- **Generic webhook** — `--notify-webhook` for any JSON endpoint (PagerDuty, custom bots, etc.)
+- **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email/SMS/Lambda fans-out
+- **Alert fingerprinting** — same failure is not re-notified on every interval tick until the issue changes or clears
+- **Notify on FAIL by default**; add `--notify-on-warn` to include warnings
 
 ### Load balancer and target groups
 
@@ -144,6 +154,15 @@ python ecs_doctor.py -c my-cluster -s my-api --json
 
 # HTML report — shareable page grouped by cluster
 python ecs_doctor.py -c my-cluster --all-services --html
+
+# Continuous monitor every 10 minutes + Slack when not healthy / not HTTP 200
+python ecs_doctor.py --config config.json --interval 10m \
+  --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+# One service with an explicit health URL
+python ecs_doctor.py -c my-cluster -s my-api \
+  --health-url https://api.example.com/health \
+  --interval 10m --notify-webhook https://example.com/hooks/ecs
 ```
 
 **Optional flags**
@@ -156,6 +175,57 @@ python ecs_doctor.py -c my-cluster --all-services --html
 | `--verbose` | Detailed technical output |
 | `--html [FILE]` | Write HTML report (default: `ecs_report.html`) |
 | `--json` | Machine-readable output for pipelines |
+| `--interval 10m` | Continuous checks (`30s`, `10m`, `1h`) |
+| `--health-url URL` | HTTP check URL that must return 200 |
+| `--health-path /health` | Path used with auto-detected host |
+| `--expected-http-status 200` | Override expected HTTP status |
+| `--notify-slack WEBHOOK` | Slack alert on FAIL |
+| `--notify-webhook URL` | Generic JSON webhook on FAIL |
+| `--notify-sns TOPIC_ARN` | SNS publish on FAIL |
+| `--notify-on-warn` | Also notify on WARN |
+
+---
+
+## Continuous monitoring and HTTP 200 alerts
+
+Run a check every 10 minutes and notify when a service is unhealthy or its health endpoint is **not HTTP 200**:
+
+```bash
+python ecs_doctor.py --config config.json --interval 10m \
+  --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
+```
+
+How the HTTP check picks a URL:
+
+1. Per-service `health_check_url` in config (recommended)
+2. CLI `--health-url`
+3. Auto-detect from Route 53 / load balancer host + `http_health_path` (default `/health`)
+
+If the response status is not `200` (or your `--expected-http-status`), that service fails and notifications fire.
+
+Example config:
+
+```json
+{
+  "cluster": "dev-apps-cluster",
+  "services": [
+    {
+      "name": "orders-api",
+      "health_check_url": "https://api.example.com/health"
+    }
+  ],
+  "checks": {
+    "include_http_health": true,
+    "http_expected_status": 200
+  },
+  "notifications": {
+    "on_fail": true,
+    "slack_webhook_url": "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+  }
+}
+```
+
+Alerts include the failing cluster/service, HTTP status/URL when available, and a short issue summary. In continuous mode, the same unhealthy fingerprint is not re-sent every tick until the status changes.
 
 ---
 
@@ -172,6 +242,7 @@ Application and infrastructure signals together:
 | **Container image** | Which image/tag is actually deployed (from the task definition) |
 | **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
 | **Stable tasks** | Last 3 task definitions that ran stably — with image tag and a copy-paste rollback command |
+| **HTTP** | Application URL returns expected status (default **200**); alerts when not 200 |
 | **Connectivity** | Rough path diagram: Route 53 → ALB/NLB → target group → ECS → inferred backends (RDS, DynamoDB, ElastiCache, etc. from env/secrets) → ECR |
 
 This is **read-only** — it inspects your services and produces a CLI summary, JSON for CI/CD, or a shareable HTML **Service Health Report**.
@@ -371,6 +442,7 @@ Read-only access only:
 - `route53:ListResourceRecordSets`
 - `servicediscovery:GetService`
 - `sts:GetCallerIdentity`
+- `sns:Publish` (only if you use SNS notifications)
 
 ---
 

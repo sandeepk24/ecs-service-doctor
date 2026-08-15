@@ -16,6 +16,7 @@ Checks:
 - load balancer target group health
 - recent stable task definitions for rollback
 - HTTP endpoint health (expect 200) and notifications
+- Slack, Microsoft Teams, webhook, and SNS alerts
 - continuous monitoring with --interval
 
 Usage:
@@ -55,7 +56,7 @@ from topology import (
 )
 
 
-VERSION = "0.7.7"
+VERSION = "0.7.8"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2631,6 +2632,8 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
 
     if getattr(args, "notify_slack", None):
         notifications["slack_webhook_url"] = args.notify_slack
+    if getattr(args, "notify_teams", None):
+        notifications["teams_webhook_url"] = args.notify_teams
     if getattr(args, "notify_webhook", None):
         notifications["webhook_url"] = args.notify_webhook
     if getattr(args, "notify_sns", None):
@@ -2675,6 +2678,7 @@ def run_once(
 
     if notify_now and (
         notifications_config.get("slack_webhook_url")
+        or notifications_config.get("teams_webhook_url")
         or notifications_config.get("webhook_url")
         or notifications_config.get("sns_topic_arn")
     ):
@@ -2693,7 +2697,7 @@ def run_once(
     elif notify_now:
         print(
             "Services unhealthy, but no notification channel configured "
-            "(use --notify-slack, --notify-webhook, or --notify-sns)."
+            "(use --notify-slack, --notify-teams, --notify-webhook, or --notify-sns)."
         )
 
     return report, compute_exit_code(report), fingerprint if should_notify(
@@ -2721,6 +2725,7 @@ Quick start (no config file):
 
 Continuous monitoring with HTTP 200 alerts:
   %(prog)s --config config.json --interval 10m --notify-slack https://hooks.slack.com/...
+  %(prog)s --config config.json --interval 10m --notify-teams https://outlook.office.com/webhook/...
   %(prog)s -c my-cluster -s my-api --health-url https://api.example.com/health --interval 10m
 
 With a config file:
@@ -2820,6 +2825,12 @@ With a config file:
         "--notify-slack",
         metavar="WEBHOOK_URL",
         help="Slack incoming webhook URL for unhealthy alerts",
+    )
+
+    parser.add_argument(
+        "--notify-teams",
+        metavar="WEBHOOK_URL",
+        help="Microsoft Teams incoming webhook URL for unhealthy alerts",
     )
 
     parser.add_argument(

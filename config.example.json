@@ -23,6 +23,7 @@
     "on_fail": true,
     "on_warn": false,
     "slack_webhook_url": "https://hooks.slack.com/services/REPLACE/ME",
+    "teams_webhook_url": "",
     "webhook_url": "",
     "sns_topic_arn": ""
   }

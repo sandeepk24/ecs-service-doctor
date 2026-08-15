@@ -133,6 +133,35 @@ def send_slack_webhook(webhook_url: str, payload: Dict[str, Any]) -> Dict[str, A
     return _post_json(webhook_url, body, channel="slack")
 
 
+def send_teams_webhook(webhook_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Post to a Microsoft Teams incoming webhook or Power Automate workflow."""
+    failed = (payload.get("summary") or {}).get("failed", 0)
+    facts = [
+        {"name": "Region", "value": str(payload.get("region") or "—")},
+        {"name": "Account", "value": str(payload.get("account_id") or "—")},
+        {"name": "Time", "value": str(payload.get("generated_at") or utc_now())},
+    ]
+    for item in payload.get("unhealthy_services", [])[:8]:
+        name = f"{item.get('cluster')}/{item.get('service')}"
+        facts.append({"name": name, "value": str(item.get("summary") or item.get("status"))})
+
+    body = {
+        "text": payload["text"][:4000],
+        "title": payload["title"][:150],
+        "@type": "MessageCard",
+        "@context": "https://schema.org/extensions",
+        "summary": payload["title"][:150],
+        "themeColor": "E11D48" if failed else "F59E0B",
+        "sections": [
+            {
+                "activityTitle": payload["title"][:150],
+                "facts": facts,
+            }
+        ],
+    }
+    return _post_json(webhook_url, body, channel="teams")
+
+
 def send_generic_webhook(webhook_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return _post_json(webhook_url, payload, channel="webhook")
 
@@ -199,6 +228,10 @@ def dispatch_notifications(
     slack_url = notifications_config.get("slack_webhook_url")
     if slack_url:
         results.append(send_slack_webhook(slack_url, payload))
+
+    teams_url = notifications_config.get("teams_webhook_url")
+    if teams_url:
+        results.append(send_teams_webhook(teams_url, payload))
 
     webhook_url = notifications_config.get("webhook_url")
     if webhook_url:

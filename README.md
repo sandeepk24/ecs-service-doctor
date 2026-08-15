@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.7.7**):
+Everything this repo provides today (**v0.7.8**):
 
 ### Application health checks
 
@@ -57,6 +57,7 @@ Shareable, self-contained HTML (no external assets after export):
 
 - **`--interval 10m`** — re-check on a schedule until you stop the process (also `30s`, `1h`)
 - **Slack webhook** — `--notify-slack` or config `notifications.slack_webhook_url`
+- **Microsoft Teams** — `--notify-teams` or config `notifications.teams_webhook_url`
 - **Generic webhook** — `--notify-webhook` for any JSON endpoint (PagerDuty, custom bots, etc.)
 - **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email/SMS/Lambda fan-out
 - **Alert fingerprinting** — same failure is not re-notified on every interval tick until the issue changes or clears
@@ -159,9 +160,12 @@ python ecs_doctor.py -c my-cluster -s my-api --json
 # HTML report — shareable page grouped by cluster
 python ecs_doctor.py -c my-cluster --all-services --html
 
-# Continuous monitor every 10 minutes + Slack when not healthy / not HTTP 200
+# Continuous monitor every 10 minutes + Slack or Teams when not healthy / not HTTP 200
 python ecs_doctor.py --config config.json --interval 10m \
   --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+python ecs_doctor.py --config config.json --interval 10m \
+  --notify-teams https://outlook.office.com/webhook/XXX
 
 # One service with an explicit health URL
 python ecs_doctor.py -c my-cluster -s my-api \
@@ -184,6 +188,7 @@ python ecs_doctor.py -c my-cluster -s my-api \
 | `--health-path /health` | Path used with auto-detected host |
 | `--expected-http-status 200` | Override expected HTTP status |
 | `--notify-slack WEBHOOK` | Slack alert on FAIL |
+| `--notify-teams WEBHOOK` | Microsoft Teams alert on FAIL |
 | `--notify-webhook URL` | Generic JSON webhook on FAIL |
 | `--notify-sns TOPIC_ARN` | SNS publish on FAIL |
 | `--notify-on-warn` | Also notify on WARN |
@@ -197,6 +202,9 @@ Run a check every 10 minutes and notify when a service is unhealthy or its healt
 ```bash
 python ecs_doctor.py --config config.json --interval 10m \
   --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+python ecs_doctor.py --config config.json --interval 10m \
+  --notify-teams https://outlook.office.com/webhook/XXX
 ```
 
 How the HTTP check picks a URL:
@@ -224,12 +232,15 @@ Example config:
   },
   "notifications": {
     "on_fail": true,
-    "slack_webhook_url": "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+    "slack_webhook_url": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+    "teams_webhook_url": "https://outlook.office.com/webhook/XXX"
   }
 }
 ```
 
 Alerts include the failing cluster/service, HTTP status/URL when available, and a short issue summary. In continuous mode, the same unhealthy fingerprint is not re-sent every tick until the status changes.
+
+For Microsoft Teams, use an incoming webhook (classic Office connector) or a Power Automate “When a Teams webhook request is received” workflow URL. Both `--notify-teams` and `notifications.teams_webhook_url` work. You can send Slack and Teams at the same time.
 
 ---
 

@@ -168,7 +168,6 @@ function CheckRow({
 export function ServiceDetail({ item }: { item: ServiceResult }) {
   const checks = item.checks ?? {};
   const events = checks.recent_events?.events ?? [];
-  const images = checks.task_definition?.container_images ?? [];
   const resources = checks.resources;
   const cpu = resources?.cpu as ReportCheck | undefined;
   const memory = resources?.memory as ReportCheck | undefined;
@@ -185,22 +184,29 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
           <span className="mini-label">Task definition</span>
           <code>{metrics.revision}</code>
         </div>
-        {metrics.image && (
-          <div>
-            <span className="mini-label">Image</span>
-            <code title={metrics.image}>{metrics.image}</code>
-          </div>
-        )}
         {metrics.lastDeploy && (
           <div>
             <span className="mini-label">Last deployment</span>
             <strong>{formatTimestamp(metrics.lastDeploy)}</strong>
           </div>
         )}
-        {item.launch_type && (
+        {metrics.launchDetail && (
           <div>
             <span className="mini-label">Launch</span>
-            <strong>{item.launch_type}</strong>
+            <strong>{metrics.launchDetail}</strong>
+          </div>
+        )}
+        {metrics.images.length > 0 && (
+          <div className="span-2">
+            <span className="mini-label">
+              Image{metrics.images.length > 1 ? "s" : ""}
+            </span>
+            {metrics.images.map((entry) => (
+              <code key={`${entry.container}-${entry.image}`}>
+                {entry.container ? `${entry.container}: ` : ""}
+                {entry.image}
+              </code>
+            ))}
           </div>
         )}
       </div>
@@ -240,17 +246,6 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
       </div>
 
       <StableTasksSection stableTasks={checks.stable_tasks} />
-
-      {images.length > 1 && (
-        <div className="images">
-          {images.slice(1).map((image) => (
-            <div key={image.container} className="image-row">
-              <span className="mini-label">{image.container}</span>
-              <code>{image.image}</code>
-            </div>
-          ))}
-        </div>
-      )}
 
       {events.length > 0 && (
         <div className="events">

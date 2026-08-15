@@ -59,7 +59,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2879,6 +2879,60 @@ def build_sample_report() -> Dict[str, Any]:
         task_definition = item["checks"].setdefault("task_definition", {})
         task_definition["cpu"] = str(cpu)
         task_definition["memory"] = str(memory)
+        task_definition["network_mode"] = "awsvpc"
+        task_definition["requires_compatibilities"] = ["FARGATE"]
+        deployments = item["checks"].setdefault("deployments", {})
+        if not deployments.get("deployments"):
+            name = item["service"]
+            if name == "payments-api":
+                deployments["deployments"] = [
+                    {
+                        "id": "ecs-svc/payments-primary",
+                        "status": "PRIMARY",
+                        "rollout_state": "IN_PROGRESS",
+                        "desired": 2,
+                        "running": 1,
+                        "pending": 1,
+                        "failed_tasks": 1,
+                        "created_at": "2026-08-07T19:48:00+00:00",
+                        "updated_at": "2026-08-07T19:52:00+00:00",
+                    }
+                ]
+            elif name == "agents-service":
+                deployments["deployments"] = [
+                    {
+                        "id": "ecs-svc/agents-primary",
+                        "status": "PRIMARY",
+                        "rollout_state": "IN_PROGRESS",
+                        "desired": 1,
+                        "running": 0,
+                        "pending": 1,
+                        "failed_tasks": 0,
+                        "created_at": "2026-08-07T19:54:00+00:00",
+                        "updated_at": "2026-08-07T19:55:00+00:00",
+                    },
+                    {
+                        "id": "ecs-svc/agents-active",
+                        "status": "ACTIVE",
+                        "rollout_state": "COMPLETED",
+                        "desired": 1,
+                        "running": 1,
+                        "pending": 0,
+                        "failed_tasks": 0,
+                        "created_at": "2026-08-06T11:00:00+00:00",
+                        "updated_at": "2026-08-06T11:08:00+00:00",
+                    },
+                ]
+            else:
+                deployments["deployments"] = [
+                    {
+                        "id": f"ecs-svc/{name}-primary",
+                        "status": "PRIMARY",
+                        "rollout_state": "COMPLETED",
+                        "created_at": "2026-08-07T18:10:00+00:00",
+                        "updated_at": "2026-08-07T19:58:00+00:00",
+                    }
+                ]
 
     dns_by_lb = {
         "dev-apps-alb": [

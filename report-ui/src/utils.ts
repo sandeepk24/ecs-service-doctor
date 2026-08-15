@@ -38,6 +38,8 @@ export function formatTimestamp(value: string) {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: "medium",
       timeStyle: "short",
+      timeZone: "UTC",
+      timeZoneName: "short",
     }).format(new Date(value));
   } catch {
     return value;
@@ -244,28 +246,84 @@ export function targetCounts(item: ServiceResult): {
   return { healthy, total };
 }
 
+function usableTimestamp(value?: string): string | undefined {
+  if (!value || value === "None" || value === "null") return undefined;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? undefined : value;
+}
+
+export function lastDeploymentAt(item: ServiceResult): string | undefined {
+  const deployments =
+    (item.checks?.deployments?.deployments as
+      | Array<{
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        }>
+      | undefined) ?? [];
+  const primary =
+    deployments.find((deployment) => deployment.status === "PRIMARY") ??
+    deployments[0];
+  const fromDeploy =
+    usableTimestamp(primary?.created_at) ?? usableTimestamp(primary?.updated_at);
+  if (fromDeploy) return fromDeploy;
+
+  const events =
+    (item.checks?.recent_events?.events as
+      | Array<{ created_at?: string; message?: string }>
+      | undefined) ?? [];
+  const started = events.find((event) =>
+    /has started \d+ tasks|deployment|force.new.deployment/i.test(
+      event.message ?? "",
+    ),
+  );
+  if (usableTimestamp(started?.created_at)) return started?.created_at;
+
+  const stable = item.checks?.stable_tasks as
+    | { stable_tasks?: Array<{ is_current?: boolean; last_stable_at?: string }> }
+    | undefined;
+  const current = stable?.stable_tasks?.find((task) => task.is_current);
+  return usableTimestamp(current?.last_stable_at);
+}
+
 export function serviceMetrics(item: ServiceResult) {
   const counts = item.checks?.task_counts;
   const targets = targetCounts(item);
   const cpu = item.checks?.resources?.cpu as
-    | { utilization?: number; message?: string; status?: string }
-    | undefined;
-  const memory = item.checks?.resources?.memory as
-    | { utilization?: number; message?: string; status?: string }
-    | undefined;
-  const images =
-    (item.checks?.task_definition?.container_images as
-      | Array<{ container: string; image: string }>
-      | undefined) ?? [];
-  const stable = item.checks?.stable_tasks as
     | {
-        stable_tasks?: Array<{
-          is_current?: boolean;
-          last_stable_at?: string;
-        }>;
+        utilization?: number;
+        message?: string;
+        status?: string;
+        reserved_label?: string;
       }
     | undefined;
-  const current = stable?.stable_tasks?.find((task) => task.is_current);
+  const memory = item.checks?.resources?.memory as
+    | {
+        utilization?: number;
+        message?: string;
+        status?: string;
+        reserved_label?: string;
+      }
+    | undefined;
+  const taskDef = item.checks?.task_definition as
+    | {
+        cpu?: string;
+        memory?: string;
+        network_mode?: string;
+        requires_compatibilities?: string[];
+        container_images?: Array<{ container: string; image: string }>;
+      }
+    | undefined;
+  const images = taskDef?.container_images ?? [];
+  const launchBits = [
+    item.launch_type,
+    item.platform_version ? `platform ${item.platform_version}` : undefined,
+    cpu?.reserved_label && memory?.reserved_label
+      ? `${cpu.reserved_label} / ${memory.reserved_label}`
+      : cpu?.reserved_label || memory?.reserved_label,
+    taskDef?.network_mode,
+  ].filter(Boolean);
+
   return {
     running: asNumber(counts?.running),
     desired: asNumber(counts?.desired),
@@ -278,10 +336,16 @@ export function serviceMetrics(item: ServiceResult) {
     memUtil: asNumber(memory?.utilization),
     cpuStatus: cpu?.status,
     memStatus: memory?.status,
-    image: images[0]?.image,
+    cpuReserved: cpu?.reserved_label,
+    memReserved: memory?.reserved_label,
+    images,
+    image: images.map((entry) => entry.image).join("\n") || undefined,
     revision: shortTaskDefinition(item.task_definition),
-    lastDeploy: current?.last_stable_at,
+    lastDeploy: lastDeploymentAt(item),
     env: inferEnvironment(item.cluster),
+    launchDetail: launchBits.join(" · ") || undefined,
+    networkMode: taskDef?.network_mode,
+    platformVersion: item.platform_version,
   };
 }
 

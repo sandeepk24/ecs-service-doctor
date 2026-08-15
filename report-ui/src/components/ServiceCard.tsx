@@ -65,13 +65,7 @@ export function ServiceOpsCard({
       {restart && (
         <span
           className="restart-chip"
-          title={
-            restart.reasons.length
-              ? restart.reasons.join(" · ")
-              : restart.lastAt
-                ? `Last start ${formatTimestamp(restart.lastAt)}`
-                : "Restarted in the last 12 hours"
-          }
+          title={restart.reasons[0] ?? "Restarted in the last 12 hours"}
         >
           Restarted {restart.count}×
         </span>

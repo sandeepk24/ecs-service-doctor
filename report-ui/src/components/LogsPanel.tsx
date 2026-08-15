@@ -84,27 +84,48 @@ export function LogsPanel({ services, selected, generatedAt, onSelect }: Props) 
         {restart && (
           <div className="restart-banner">
             <strong>
-              Restarted {restart.count} time{restart.count === 1 ? "" : "s"} in
-              the last 12 hours
+              Why it restarted · {restart.count} time
+              {restart.count === 1 ? "" : "s"} in the last 12 hours
             </strong>
-            <p>
-              {restart.reasons.length
-                ? restart.reasons.join(" · ")
-                : "ECS started replacement tasks; no failure reason in recent service events."}
-            </p>
-            {ecsEvents.length > 0 && (
+            {restart.stops.length > 0 ? (
               <ul className="restart-event-list">
-                {ecsEvents.slice(0, 5).map((event, index) => (
-                  <li key={`${event.created_at}-${index}`}>
+                {restart.stops.map((stop, index) => (
+                  <li key={`${stop.stopped_at}-${index}`}>
                     <time>
-                      {event.created_at
-                        ? formatTimestamp(event.created_at)
+                      {stop.stopped_at
+                        ? formatTimestamp(stop.stopped_at)
                         : "—"}
                     </time>
-                    <span>{event.message}</span>
+                    <span>
+                      {restart.reasons[index] ??
+                        stop.stopped_reason ??
+                        "Task stopped"}
+                    </span>
                   </li>
                 ))}
               </ul>
+            ) : (
+              <>
+                <p>
+                  {restart.reasons.length
+                    ? restart.reasons.join(" · ")
+                    : "ECS started replacement tasks; no stop reason was recorded."}
+                </p>
+                {ecsEvents.length > 0 && (
+                  <ul className="restart-event-list">
+                    {ecsEvents.slice(0, 5).map((event, index) => (
+                      <li key={`${event.created_at}-${index}`}>
+                        <time>
+                          {event.created_at
+                            ? formatTimestamp(event.created_at)
+                            : "—"}
+                        </time>
+                        <span>{event.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         )}

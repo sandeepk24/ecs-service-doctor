@@ -60,7 +60,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.8"
+VERSION = "0.9.9"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -992,6 +992,100 @@ def collect_stable_tasks_from_stopped_tasks(
                 task_arn=task.get("taskArn"),
                 stop_code=stop_code,
             )
+
+
+def _iso(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    text = str(value)
+    return None if text in {"None", "null", ""} else text
+
+
+def _within_hours(value: Any, hours: int) -> bool:
+    stamp = _iso(value)
+    if not stamp:
+        return True
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
+    return age <= timedelta(hours=hours)
+
+
+def evaluate_recent_stops(
+    ecs_client,
+    cluster_name: str,
+    service_name: str,
+    lookback_hours: int = 12,
+    max_tasks: int = 20,
+) -> Dict[str, Any]:
+    try:
+        response = ecs_client.list_tasks(
+            cluster=cluster_name,
+            serviceName=service_name,
+            desiredStatus="STOPPED",
+            maxResults=min(max_tasks, 100),
+        )
+    except ClientError as exc:
+        return {
+            "status": STATUS_WARN,
+            "message": f"Could not list stopped tasks: {exc}",
+            "stops": [],
+        }
+
+    task_arns = response.get("taskArns", [])
+    stops: List[Dict[str, Any]] = []
+    for offset in range(0, len(task_arns), 100):
+        batch = task_arns[offset : offset + 100]
+        described = ecs_client.describe_tasks(cluster=cluster_name, tasks=batch)
+        for task in described.get("tasks", []):
+            stopped_at = task.get("stoppedAt") or task.get("stoppingAt")
+            if not _within_hours(stopped_at, lookback_hours):
+                continue
+            containers = []
+            for container in task.get("containers") or []:
+                reason = container.get("reason")
+                exit_code = container.get("exitCode")
+                if reason or exit_code not in (None, 0):
+                    containers.append(
+                        {
+                            "name": container.get("name"),
+                            "exit_code": exit_code,
+                            "reason": reason,
+                        }
+                    )
+            detail = containers[0] if containers else {}
+            stops.append(
+                {
+                    "task_arn": task.get("taskArn"),
+                    "stopped_at": _iso(stopped_at),
+                    "stop_code": task.get("stopCode"),
+                    "stopped_reason": task.get("stoppedReason"),
+                    "container": detail.get("name"),
+                    "exit_code": detail.get("exit_code"),
+                    "container_reason": detail.get("reason"),
+                }
+            )
+
+    stops.sort(key=lambda item: item.get("stopped_at") or "", reverse=True)
+    if not stops:
+        return {
+            "status": STATUS_PASS,
+            "message": f"No stopped tasks in the last {lookback_hours} hours",
+            "stops": [],
+            "lookback_hours": lookback_hours,
+        }
+    return {
+        "status": STATUS_PASS,
+        "message": f"{len(stops)} stopped task(s) in the last {lookback_hours} hours",
+        "stops": stops,
+        "lookback_hours": lookback_hours,
+    }
 
 
 def enrich_stable_task_candidates(
@@ -2004,6 +2098,14 @@ def inspect_service(
                 limit=int(checks_config.get("log_line_limit", 40)),
             )
 
+        if checks_config.get("include_restarts", True):
+            result["checks"]["restarts"] = evaluate_recent_stops(
+                ecs_client,
+                cluster_name,
+                service_name,
+                lookback_hours=int(checks_config.get("restart_lookback_hours", 12)),
+            )
+
         if checks_config.get("include_target_group_health", True):
             result["checks"]["target_group_health"] = evaluate_target_health(
                 service,
@@ -2095,7 +2197,7 @@ def inspect_service(
             {
                 key: value
                 for key, value in result["checks"].items()
-                if key not in {"connectivity", "stable_tasks", "logs"}
+                if key not in {"connectivity", "stable_tasks", "logs", "restarts"}
             }
         )
 
@@ -3149,6 +3251,70 @@ def build_sample_report() -> Dict[str, Any]:
             "events": log_events,
             "lookback_minutes": 30,
         }
+        if name == "payments-api":
+            item["checks"]["restarts"] = {
+                "status": STATUS_PASS,
+                "message": "3 stopped task(s) in the last 12 hours",
+                "lookback_hours": 12,
+                "stops": [
+                    {
+                        "stopped_at": "2026-08-07T19:52:10+00:00",
+                        "stop_code": "EssentialContainerExited",
+                        "stopped_reason": "Essential container in task exited",
+                        "container": "payments-api",
+                        "exit_code": 1,
+                        "container_reason": (
+                            "ResourceInitializationError: unable to pull secrets or "
+                            "registry auth from Amazon ECS: failed to fetch secret "
+                            "from SSM Parameter Store. Check the task execution role."
+                        ),
+                    },
+                    {
+                        "stopped_at": "2026-08-07T14:12:40+00:00",
+                        "stop_code": "EssentialContainerExited",
+                        "stopped_reason": "Task failed ELB health checks in (target-group arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-payments/abc)",
+                        "container": "payments-api",
+                        "exit_code": 137,
+                        "container_reason": "OutOfMemory: container killed due to memory limit",
+                    },
+                    {
+                        "stopped_at": "2026-08-07T10:05:18+00:00",
+                        "stop_code": "ServiceSchedulerInitiated",
+                        "stopped_reason": "Scaling activity initiated by (deployment ecs-svc/payments-primary)",
+                        "container": "payments-api",
+                        "exit_code": 0,
+                    },
+                ],
+            }
+        elif name == "agents-service":
+            item["checks"]["restarts"] = {
+                "status": STATUS_PASS,
+                "message": "2 stopped task(s) in the last 12 hours",
+                "lookback_hours": 12,
+                "stops": [
+                    {
+                        "stopped_at": "2026-08-07T19:54:05+00:00",
+                        "stop_code": "ServiceSchedulerInitiated",
+                        "stopped_reason": "Scaling activity initiated by (deployment ecs-svc/agents-primary)",
+                        "container": "agents-service",
+                        "exit_code": 0,
+                    },
+                    {
+                        "stopped_at": "2026-08-07T12:20:11+00:00",
+                        "stop_code": "ServiceSchedulerInitiated",
+                        "stopped_reason": "Scaling activity initiated by (deployment ecs-svc/agents-primary)",
+                        "container": "agents-service",
+                        "exit_code": 0,
+                    },
+                ],
+            }
+        else:
+            item["checks"]["restarts"] = {
+                "status": STATUS_PASS,
+                "message": "No stopped tasks in the last 12 hours",
+                "lookback_hours": 12,
+                "stops": [],
+            }
 
     dns_by_lb = {
         "dev-apps-alb": [

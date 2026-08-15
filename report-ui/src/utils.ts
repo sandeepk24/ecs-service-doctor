@@ -252,37 +252,44 @@ function usableTimestamp(value?: string): string | undefined {
   return Number.isNaN(time) ? undefined : value;
 }
 
+export interface RestartStop {
+  stopped_at?: string;
+  stop_code?: string;
+  stopped_reason?: string;
+  container?: string;
+  exit_code?: number | null;
+  container_reason?: string;
+}
+
 export interface RestartSummary {
   count: number;
   lastAt?: string;
   reasons: string[];
+  stops: RestartStop[];
 }
 
 const START_EVENT_RE =
   /has started (\d+) tasks|started (\d+) tasks for deployment/i;
 
-function restartReason(message: string): string | undefined {
-  const reason = message.match(/Reason:\s*([^.]+)/i);
-  if (reason?.[1]) return reason[1].trim();
-  if (/health checks failed/i.test(message)) {
-    return "Target group health checks failed";
+function formatStopReason(stop: RestartStop): string {
+  const bits: string[] = [];
+  if (stop.stopped_reason) bits.push(stop.stopped_reason);
+  if (stop.container_reason && stop.container_reason !== stop.stopped_reason) {
+    bits.push(stop.container_reason);
   }
-  if (/essential container .+ exited/i.test(message)) {
-    return "Essential container exited";
+  if (stop.container || stop.exit_code != null) {
+    const extra = [
+      stop.container,
+      stop.exit_code != null ? `exit ${stop.exit_code}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (extra) bits.push(`(${extra})`);
   }
-  if (/cannotpullcontainererror|failed to pull/i.test(message)) {
-    return "Failed to pull container image";
+  if (stop.stop_code && !bits.some((bit) => bit.includes(stop.stop_code ?? ""))) {
+    bits.push(stop.stop_code);
   }
-  if (/outofmemory|out of memory/i.test(message)) {
-    return "Out of memory";
-  }
-  if (/has begun a new deployment|force.?new.?deployment/i.test(message)) {
-    return "New deployment started tasks";
-  }
-  if (/unable to place a task/i.test(message)) {
-    return "Unable to place a task";
-  }
-  return undefined;
+  return bits.join(" — ") || "Task stopped";
 }
 
 export function restartSummary(
@@ -293,6 +300,26 @@ export function restartSummary(
   const now = Date.parse(nowIso);
   if (Number.isNaN(now)) return undefined;
   const cutoff = now - hours * 60 * 60 * 1000;
+  const inWindow = (value?: string) => {
+    const stamp = usableTimestamp(value);
+    if (!stamp) return false;
+    const time = Date.parse(stamp);
+    return !Number.isNaN(time) && time >= cutoff && time <= now;
+  };
+
+  const collected =
+    (item.checks?.restarts?.stops as RestartStop[] | undefined) ?? [];
+  const stops = collected.filter((stop) => inWindow(stop.stopped_at));
+  if (stops.length) {
+    const reasons = stops.map(formatStopReason);
+    return {
+      count: stops.length,
+      lastAt: stops[0]?.stopped_at,
+      reasons,
+      stops,
+    };
+  }
+
   const events =
     (item.checks?.recent_events?.events as
       | Array<{ created_at?: string; message?: string }>
@@ -304,27 +331,25 @@ export function restartSummary(
   const seen = new Set<string>();
 
   for (const event of events) {
-    const stamp = usableTimestamp(event.created_at);
-    if (!stamp) continue;
-    const time = Date.parse(stamp);
-    if (Number.isNaN(time) || time < cutoff || time > now) continue;
-
+    if (!inWindow(event.created_at)) continue;
     const message = event.message ?? "";
     const started = message.match(START_EVENT_RE);
     if (started) {
       const n = Number(started[1] || started[2] || 1);
       count += Number.isFinite(n) && n > 0 ? n : 1;
-      if (!lastAt || stamp > lastAt) lastAt = stamp;
+      const stamp = usableTimestamp(event.created_at);
+      if (stamp && (!lastAt || stamp > lastAt)) lastAt = stamp;
+      continue;
     }
-    const reason = restartReason(message);
-    if (reason && !seen.has(reason)) {
-      seen.add(reason);
-      reasons.push(reason);
+    const cleaned = message.replace(/^\(service [^)]+\)\s*/i, "").trim();
+    if (cleaned && !seen.has(cleaned) && !/^has started /i.test(cleaned)) {
+      seen.add(cleaned);
+      reasons.push(cleaned);
     }
   }
 
   if (count === 0) return undefined;
-  return { count, lastAt, reasons };
+  return { count, lastAt, reasons, stops: [] };
 }
 
 export function restartedWithinHours(

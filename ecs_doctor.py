@@ -56,7 +56,7 @@ from topology import (
 )
 
 
-VERSION = "0.7.8"
+VERSION = "0.7.9"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1055,6 +1055,140 @@ def check_http_health(
     }
 
 
+def collect_host_header_routes(
+    connectivity: Optional[Dict[str, Any]],
+    target_health: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Host-header listener rules that forward to this service's target groups."""
+    groups = (target_health or {}).get("target_groups") or []
+    service_arns = {
+        group.get("target_group_arn") for group in groups if group.get("target_group_arn")
+    }
+    service_names = {group.get("name") for group in groups if group.get("name")}
+    if not service_arns and not service_names:
+        return []
+
+    routes: List[Dict[str, Any]] = []
+    by_host: Dict[str, Dict[str, Any]] = {}
+    for load_balancer in (connectivity or {}).get("load_balancers") or []:
+        for listener in load_balancer.get("listeners") or []:
+            protocol = str(listener.get("protocol") or "HTTPS").upper()
+            port = listener.get("port")
+            scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
+            for rule in listener.get("host_header_rules") or []:
+                rule_arns = set(rule.get("target_group_arns") or [])
+                rule_names = set(rule.get("target_groups") or [])
+                if not (rule_arns & service_arns or rule_names & service_names):
+                    continue
+                for host in rule.get("hosts") or []:
+                    route = {
+                        "host": host,
+                        "scheme": scheme,
+                        "listener": (
+                            f"{protocol}:{port}" if port is not None else protocol
+                        ),
+                        "load_balancer": load_balancer.get("name"),
+                        "target_groups": rule.get("target_groups") or [],
+                        "wildcard": "*" in str(host),
+                    }
+                    existing = by_host.get(host)
+                    if existing and existing["scheme"] == "https":
+                        continue
+                    by_host[host] = route
+    routes.extend(by_host.values())
+    return routes
+
+
+def evaluate_host_header_health(
+    connectivity: Optional[Dict[str, Any]],
+    target_health: Optional[Dict[str, Any]],
+    service_config: Dict[str, Any],
+    checks_config: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    routes = collect_host_header_routes(connectivity, target_health)
+    if not routes:
+        return None
+
+    path = service_config.get("health_check_path") or checks_config.get(
+        "http_health_path", "/health"
+    )
+    if not path.startswith("/"):
+        path = f"/{path}"
+    expected_status = int(
+        service_config.get("expected_http_status")
+        or checks_config.get("http_expected_status", 200)
+    )
+    timeout_seconds = float(checks_config.get("http_timeout_seconds", 5))
+    method = str(checks_config.get("http_method", "GET"))
+
+    host_results: List[Dict[str, Any]] = []
+    probes = []
+    for route in routes:
+        if route["wildcard"]:
+            host_results.append(
+                {
+                    "host": route["host"],
+                    "status": STATUS_WARN,
+                    "message": (
+                        f"Wildcard host header {route['host']} cannot be probed"
+                    ),
+                    "wildcard": True,
+                    "listener": route["listener"],
+                    "load_balancer": route["load_balancer"],
+                }
+            )
+            continue
+        url = f"{route['scheme']}://{route['host']}{path}"
+        probes.append((route, url))
+
+    def _probe(item: Tuple[Dict[str, Any], str]) -> Dict[str, Any]:
+        route, url = item
+        result = check_http_health(
+            url,
+            expected_status=expected_status,
+            timeout_seconds=timeout_seconds,
+            method=method,
+        )
+        return {
+            **result,
+            "host": route["host"],
+            "listener": route["listener"],
+            "load_balancer": route["load_balancer"],
+            "wildcard": False,
+        }
+
+    if probes:
+        workers = min(DEFAULT_MAX_WORKERS, len(probes))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            host_results.extend(executor.map(_probe, probes))
+
+    failed = [item for item in host_results if item.get("status") == STATUS_FAIL]
+    warned = [item for item in host_results if item.get("status") == STATUS_WARN]
+    probed_ok = [
+        item
+        for item in host_results
+        if item.get("status") == STATUS_PASS and not item.get("wildcard")
+    ]
+    if failed:
+        status = STATUS_FAIL
+        hosts = ", ".join(item["host"] for item in failed)
+        message = f"{len(failed)} host-header route(s) failed: {hosts}"
+    elif probed_ok:
+        status = STATUS_PASS
+        message = f"{len(probed_ok)} host-header route(s) healthy"
+        if warned:
+            message += f" · {len(warned)} wildcard(s) skipped"
+    else:
+        status = STATUS_WARN
+        message = "Host-header routes were found but none could be probed"
+
+    return {
+        "status": status,
+        "message": message,
+        "hosts": host_results,
+    }
+
+
 def evaluate_stable_task_history(
     ecs_client,
     cluster_name: str,
@@ -1412,7 +1546,7 @@ def inspect_service(
     prefetched_service: Optional[Dict[str, Any]] = None,
     prefetch_error: Optional[str] = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
-    route53_index: Optional[Dict[str, List[str]]] = None,
+    route53_index: Optional[Dict[str, List[Any]]] = None,
     cloudwatch_client=None,
 ) -> Dict[str, Any]:
     service_name = service_config["name"]
@@ -1562,6 +1696,16 @@ def inspect_service(
                     "expected_status": checks_config.get("http_expected_status", 200),
                 }
 
+        if checks_config.get("include_host_header_health", True):
+            host_check = evaluate_host_header_health(
+                result["checks"].get("connectivity"),
+                result["checks"].get("target_group_health"),
+                service_config,
+                checks_config,
+            )
+            if host_check:
+                result["checks"]["host_header_health"] = host_check
+
         result["peer_hints"] = collect_peer_hints(
             task_definition,
             result["checks"].get("connectivity"),
@@ -1621,7 +1765,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
     )
     max_workers = aws_config.get("max_workers", DEFAULT_MAX_WORKERS)
 
-    route53_index: Dict[str, List[str]] = {}
+    route53_index: Dict[str, List[Any]] = {}
     if checks_config.get("include_connectivity_diagram", True):
         try:
             route53_index = build_route53_index(session.client("route53"))
@@ -1765,6 +1909,15 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         else:
             lines.append(f"  HTTP: {http_health.get('message', 'not 200')}")
 
+    host_headers = checks.get("host_header_health")
+    if host_headers:
+        if host_headers.get("status") == STATUS_PASS:
+            lines.append(f"  Host headers: {host_headers.get('message', 'OK')}")
+        else:
+            lines.append(
+                f"  Host headers: {host_headers.get('message', 'host-header check failed')}"
+            )
+
     resources = checks.get("resources")
     if resources:
         cpu = resources.get("cpu") or {}
@@ -1790,6 +1943,20 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         lines.append(f"  Image: {primary['image']}")
 
     connectivity = checks.get("connectivity", {})
+    dns_names = [
+        record.get("name")
+        for record in connectivity.get("dns_records") or []
+        if record.get("name")
+    ]
+    if not dns_names:
+        dns_names = [
+            node.get("label")
+            for node in connectivity.get("nodes") or []
+            if node.get("type") == "route53" and node.get("label")
+        ]
+    if dns_names:
+        unique = list(dict.fromkeys(dns_names))
+        lines.append(f"  DNS: {', '.join(unique)}")
     if connectivity.get("summary"):
         lines.append(f"  Connectivity: {connectivity['summary']}")
 
@@ -1893,6 +2060,21 @@ def print_human_report(report: Dict[str, Any]) -> None:
         http_health = checks.get("http_health")
         if http_health:
             print(f"  HTTP Health     : [{http_health['status']}] {http_health['message']}")
+
+        host_headers = checks.get("host_header_health")
+        if host_headers:
+            print(
+                f"  Host headers    : [{host_headers['status']}] {host_headers['message']}"
+            )
+
+        connectivity = checks.get("connectivity") or {}
+        dns_names = [
+            record.get("name")
+            for record in connectivity.get("dns_records") or []
+            if record.get("name")
+        ]
+        if dns_names:
+            print(f"  Route 53        : {', '.join(dict.fromkeys(dns_names))}")
 
         resources = checks.get("resources")
         if resources:
@@ -2443,6 +2625,128 @@ def build_sample_report() -> Dict[str, Any]:
         task_definition = item["checks"].setdefault("task_definition", {})
         task_definition["cpu"] = str(cpu)
         task_definition["memory"] = str(memory)
+
+    dns_by_lb = {
+        "dev-apps-alb": [
+            {
+                "name": "api.example.com",
+                "type": "A",
+                "alias": True,
+                "zone_name": "example.com",
+                "target": "dev-apps-alb-123.us-east-1.elb.amazonaws.com",
+            },
+            {
+                "name": "www.example.com",
+                "type": "A",
+                "alias": True,
+                "zone_name": "example.com",
+                "target": "dev-apps-alb-123.us-east-1.elb.amazonaws.com",
+            },
+        ],
+        "payments-alb": [
+            {
+                "name": "payments.example.com",
+                "type": "A",
+                "alias": True,
+                "zone_name": "example.com",
+                "target": "payments-alb-789.us-east-1.elb.amazonaws.com",
+            }
+        ],
+        "dev-internal-alb": [
+            {
+                "name": "agents.internal.example.com",
+                "type": "A",
+                "alias": True,
+                "zone_name": "internal.example.com",
+                "target": "internal-dev-internal-alb-456.us-east-1.elb.amazonaws.com",
+            }
+        ],
+    }
+    for item in report["results"]:
+        connectivity = item["checks"].setdefault("connectivity", {})
+        records_out: List[Dict[str, Any]] = []
+        for load_balancer in connectivity.get("load_balancers") or []:
+            records = dns_by_lb.get(load_balancer.get("name"), [])
+            load_balancer["dns_records"] = records
+            for record in records:
+                records_out.append(
+                    {
+                        **record,
+                        "load_balancer": load_balancer.get("name"),
+                        "load_balancer_dns": load_balancer.get("dns_name"),
+                    }
+                )
+        if records_out:
+            connectivity["dns_records"] = records_out
+
+    host_headers_by_service = {
+        "orders-api": ["api.example.com", "www.example.com"],
+        "agents-service": ["agents.internal.example.com"],
+        "payments-api": ["payments.example.com"],
+        "catalog-api": ["catalog-api.example.com"],
+        "search-api": ["search-api.example.com"],
+        "billing-api": ["billing-api.example.com"],
+    }
+    tg_name_by_service = {
+        "orders-api": "tg-orders",
+        "agents-service": "tg-agents",
+        "payments-api": "tg-payments",
+    }
+    for item in report["results"]:
+        hosts = host_headers_by_service.get(item["service"])
+        if not hosts:
+            continue
+        tg_name = tg_name_by_service.get(item["service"], f"tg-{item['service']}")
+        connectivity = item["checks"].setdefault("connectivity", {})
+        for load_balancer in connectivity.get("load_balancers") or []:
+            for listener in load_balancer.get("listeners") or []:
+                listener["host_header_rules"] = [
+                    {
+                        "priority": "10",
+                        "hosts": hosts,
+                        "target_groups": [tg_name],
+                        "target_group_arns": [],
+                        "action": f"forward → {tg_name}",
+                    }
+                ]
+        failed = item["service"] == "payments-api"
+        host_results = []
+        for host in hosts:
+            url = f"https://{host}/health"
+            if failed:
+                host_results.append(
+                    {
+                        "host": host,
+                        "status": STATUS_FAIL,
+                        "message": f"HTTP 503 from {url} (expected 200)",
+                        "url": url,
+                        "http_status": 503,
+                        "expected_status": 200,
+                        "wildcard": False,
+                    }
+                )
+            else:
+                host_results.append(
+                    {
+                        "host": host,
+                        "status": STATUS_PASS,
+                        "message": f"HTTP 200 from {url} (28ms)",
+                        "url": url,
+                        "http_status": 200,
+                        "expected_status": 200,
+                        "elapsed_ms": 28,
+                        "wildcard": False,
+                    }
+                )
+        item["checks"]["host_header_health"] = {
+            "status": STATUS_FAIL if failed else STATUS_PASS,
+            "message": (
+                f"{len(hosts)} host-header route(s) failed: {', '.join(hosts)}"
+                if failed
+                else f"{len(hosts)} host-header route(s) healthy"
+            ),
+            "hosts": host_results,
+        }
 
     peer_hints = {
         "orders-api": [

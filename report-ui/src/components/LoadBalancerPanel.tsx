@@ -73,6 +73,17 @@ export function LoadBalancerPanel({ loadBalancers }: Props) {
                     </dd>
                   </>
                 )}
+                {!!lb.dns_records?.length && (
+                  <>
+                    <dt>Route 53</dt>
+                    <dd>
+                      {lb.dns_records
+                        .map((record) => record.name)
+                        .filter(Boolean)
+                        .join(", ")}
+                    </dd>
+                  </>
+                )}
                 {lb.scheme && (
                   <>
                     <dt>Scheme</dt>
@@ -143,6 +154,16 @@ export function LoadBalancerPanel({ loadBalancers }: Props) {
                         </span>
                         {listener.ssl_policy && (
                           <span className="lb-ssl">{listener.ssl_policy}</span>
+                        )}
+                        {!!listener.host_header_rules?.length && (
+                          <ul className="host-rules">
+                            {listener.host_header_rules.map((rule, ruleIndex) => (
+                              <li key={`${rule.priority ?? "rule"}-${ruleIndex}`}>
+                                Host {(rule.hosts ?? []).join(", ")}
+                                {rule.action ? ` · ${rule.action}` : ""}
+                              </li>
+                            ))}
+                          </ul>
                         )}
                       </li>
                     ))}

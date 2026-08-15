@@ -1213,6 +1213,62 @@ body {
   color: var(--muted);
 }
 
+.dns-panel {
+  margin: 0.85rem 0;
+  padding: 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.dns-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.7rem;
+}
+
+.dns-panel-head h4 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dns-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.dns-card {
+  padding: 0.8rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  background: rgba(2, 6, 23, 0.4);
+}
+
+.dns-card header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.dns-kind {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a5b4fc;
+}
+
 .lb-list {
   display: grid;
   gap: 0.75rem;
@@ -1306,6 +1362,18 @@ body {
 .lb-ssl {
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.host-rules {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.host-rules li {
+  margin-top: 0.2rem;
 }
 
 @media print {

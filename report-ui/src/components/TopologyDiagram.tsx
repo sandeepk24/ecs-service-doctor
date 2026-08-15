@@ -14,12 +14,21 @@ export interface TopologyEdge {
   label?: string;
 }
 
+export interface HostHeaderRule {
+  priority?: string;
+  hosts?: string[];
+  target_groups?: string[];
+  target_group_arns?: string[];
+  action?: string;
+}
+
 export interface LoadBalancerListener {
   port?: number;
   protocol?: string;
   ssl_policy?: string;
   default_actions?: string[];
   certificates?: string[];
+  host_header_rules?: HostHeaderRule[];
 }
 
 export interface LoadBalancerDetail {
@@ -37,6 +46,18 @@ export interface LoadBalancerDetail {
   subnets?: string[];
   security_groups?: string[];
   listeners?: LoadBalancerListener[];
+  dns_records?: DnsRecordDetail[];
+}
+
+export interface DnsRecordDetail {
+  name?: string;
+  type?: string;
+  alias?: boolean;
+  zone_name?: string;
+  zone_id?: string;
+  target?: string;
+  load_balancer?: string;
+  load_balancer_dns?: string;
 }
 
 export interface Topology {
@@ -48,6 +69,7 @@ export interface Topology {
   notes?: string[];
   mermaid?: string;
   load_balancers?: LoadBalancerDetail[];
+  dns_records?: DnsRecordDetail[];
 }
 
 const TYPE_LABELS: Record<string, string> = {

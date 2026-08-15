@@ -71,6 +71,7 @@ def _service_issue_summary(item: Dict[str, Any]) -> str:
     checks = item.get("checks", {})
     preferred_keys = (
         "http_health",
+        "host_header_health",
         "target_group_health",
         "task_counts",
         "deployments",
@@ -253,8 +254,10 @@ def fingerprint_unhealthy(report: Dict[str, Any]) -> str:
         if item.get("status") not in {"FAIL", "WARN"}:
             continue
         http = (item.get("checks") or {}).get("http_health") or {}
+        hosts = (item.get("checks") or {}).get("host_header_health") or {}
         parts.append(
             f"{item.get('cluster')}/{item.get('service')}:"
-            f"{item.get('status')}:{http.get('http_status')}:{http.get('message')}"
+            f"{item.get('status')}:{http.get('http_status')}:{http.get('message')}:"
+            f"{hosts.get('message')}"
         )
     return "|".join(sorted(parts))

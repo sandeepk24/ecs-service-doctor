@@ -145,6 +145,11 @@ export function serviceSnapshot(item: ServiceResult): string {
       : "App health endpoint is not reachable";
   }
 
+  const hostRoutes = checks.host_header_health;
+  if (hostRoutes?.status === "FAIL") {
+    return hostRoutes.message ?? "A host-header route is not returning HTTP 200";
+  }
+
   const tasks = checks.task_counts;
   if (tasks?.status === "FAIL") {
     const running = tasks.running as number | undefined;
@@ -181,14 +186,17 @@ export function shortTaskDefinition(arn?: string): string {
 
 export function serviceLight(item: ServiceResult): "green" | "red" {
   const http = item.checks?.http_health;
+  const hosts = item.checks?.host_header_health;
   if (http) {
     const expected = (http.expected_status as number | undefined) ?? 200;
     const code = http.http_status as number | undefined;
     if (http.status === "PASS" && (code === undefined || code === expected)) {
+      if (hosts?.status === "FAIL") return "red";
       return "green";
     }
     return "red";
   }
+  if (hosts?.status === "FAIL") return "red";
   const running = item.checks?.task_counts?.running as number | undefined;
   if (item.status === "FAIL" || !running) return "red";
   return "green";

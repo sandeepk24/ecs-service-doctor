@@ -51,26 +51,86 @@ def _node_id(prefix: str, label: str) -> str:
     return f"{prefix}_{safe}"
 
 
-def build_route53_index(route53_client) -> Dict[str, List[str]]:
-    """Map DNS target (ALB/LB hostname) -> record names pointing at it."""
-    index: Dict[str, List[str]] = {}
+def normalize_elb_dns(name: str) -> str:
+    """ALB DNS and Route 53 alias targets differ by trailing dots and dualstack."""
+    host = (name or "").strip().rstrip(".").lower()
+    for prefix in ("dualstack.", "ipv6."):
+        if host.startswith(prefix):
+            host = host[len(prefix) :]
+    return host
+
+
+def lookup_route53_records(
+    route53_index: Dict[str, List[Any]],
+    dns_name: str,
+) -> List[Dict[str, Any]]:
+    if not dns_name or not route53_index:
+        return []
+    raw = (
+        route53_index.get(normalize_elb_dns(dns_name))
+        or route53_index.get(dns_name)
+        or []
+    )
+    records: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, Optional[str]]] = set()
+    for item in raw:
+        if isinstance(item, str):
+            record = {
+                "name": item.rstrip("."),
+                "type": "A",
+                "alias": True,
+                "target": dns_name,
+            }
+        else:
+            record = dict(item)
+            if record.get("name"):
+                record["name"] = str(record["name"]).rstrip(".")
+        name = record.get("name")
+        marker = (str(name), record.get("type"))
+        if not name or marker in seen:
+            continue
+        seen.add(marker)
+        records.append(record)
+    return records
+
+
+def build_route53_index(route53_client) -> Dict[str, List[Dict[str, Any]]]:
+    """Map normalized ALB/NLB DNS name -> Route 53 records pointing at it."""
+    index: Dict[str, List[Dict[str, Any]]] = {}
 
     try:
         zone_paginator = route53_client.get_paginator("list_hosted_zones")
         for zone_page in zone_paginator.paginate():
             for zone in zone_page.get("HostedZones", []):
                 zone_id = zone["Id"].split("/")[-1]
-                record_paginator = route53_client.get_paginator("list_resource_record_sets")
+                zone_name = (zone.get("Name") or "").rstrip(".")
+                record_paginator = route53_client.get_paginator(
+                    "list_resource_record_sets"
+                )
                 for record_page in record_paginator.paginate(HostedZoneId=zone_id):
                     for record in record_page.get("ResourceRecordSets", []):
-                        record_name = record.get("Name", "").rstrip(".")
+                        record_name = (record.get("Name") or "").rstrip(".")
+                        record_type = record.get("Type")
                         alias = record.get("AliasTarget")
+                        targets: List[Tuple[str, bool]] = []
                         if alias:
-                            target = alias.get("DNSName", "").rstrip(".")
-                            index.setdefault(target, []).append(record_name)
+                            targets.append((alias.get("DNSName") or "", True))
                         for rr in record.get("ResourceRecords", []):
-                            target = rr.get("Value", "").rstrip(".")
-                            index.setdefault(target, []).append(record_name)
+                            targets.append((rr.get("Value") or "", False))
+                        for target, is_alias in targets:
+                            key = normalize_elb_dns(target)
+                            if not key or not record_name:
+                                continue
+                            index.setdefault(key, []).append(
+                                {
+                                    "name": record_name,
+                                    "type": record_type,
+                                    "alias": is_alias,
+                                    "zone_id": zone_id,
+                                    "zone_name": zone_name,
+                                    "target": target.rstrip("."),
+                                }
+                            )
     except Exception:
         return {}
 
@@ -156,6 +216,71 @@ def discover_load_balancers(
     return list(load_balancers.values()), target_groups
 
 
+def _action_target_groups(action: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    arns: List[str] = []
+    if action.get("Type") != "forward":
+        return [], []
+    if action.get("TargetGroupArn"):
+        arns.append(action["TargetGroupArn"])
+    for group in (action.get("ForwardConfig") or {}).get("TargetGroups", []):
+        arn = group.get("TargetGroupArn")
+        if arn:
+            arns.append(arn)
+    names = [
+        arn.rsplit("/", 2)[-2] if "/" in arn else arn
+        for arn in arns
+    ]
+    return arns, names
+
+
+def _host_header_values(condition: Dict[str, Any]) -> List[str]:
+    if (condition.get("Field") or "").lower() != "host-header":
+        return []
+    values = list((condition.get("HostHeaderConfig") or {}).get("Values") or [])
+    values.extend(condition.get("Values") or [])
+    return [str(value).rstrip(".").lower() for value in values if value]
+
+
+def _describe_listener_host_rules(
+    elbv2_client, listener_arn: str
+) -> List[Dict[str, Any]]:
+    rules: List[Dict[str, Any]] = []
+    try:
+        paginator = elbv2_client.get_paginator("describe_rules")
+        for page in paginator.paginate(ListenerArn=listener_arn):
+            for rule in page.get("Rules", []):
+                if rule.get("IsDefault"):
+                    continue
+                hosts: List[str] = []
+                for condition in rule.get("Conditions", []):
+                    hosts.extend(_host_header_values(condition))
+                if not hosts:
+                    continue
+                arns: List[str] = []
+                names: List[str] = []
+                action_labels: List[str] = []
+                for action in rule.get("Actions", []):
+                    action_arns, action_names = _action_target_groups(action)
+                    arns.extend(action_arns)
+                    names.extend(action_names)
+                    if action.get("Type") == "forward" and action_names:
+                        action_labels.append("forward → " + ", ".join(action_names))
+                    elif action.get("Type"):
+                        action_labels.append(str(action["Type"]))
+                rules.append(
+                    {
+                        "priority": rule.get("Priority"),
+                        "hosts": list(dict.fromkeys(hosts)),
+                        "target_group_arns": list(dict.fromkeys(arns)),
+                        "target_groups": list(dict.fromkeys(names)),
+                        "action": " · ".join(action_labels) or "forward",
+                    }
+                )
+    except Exception:
+        return rules
+    return rules
+
+
 def _describe_listeners(elbv2_client, load_balancer_arn: str) -> List[Dict[str, Any]]:
     listeners: List[Dict[str, Any]] = []
     try:
@@ -167,17 +292,9 @@ def _describe_listeners(elbv2_client, load_balancer_arn: str) -> List[Dict[str, 
                     action_type = action.get("Type", "unknown")
                     target_group_arn = action.get("TargetGroupArn")
                     if action_type == "forward":
-                        groups = (action.get("ForwardConfig") or {}).get(
-                            "TargetGroups", []
-                        )
-                        if groups:
-                            names = [
-                                group.get("TargetGroupArn", "").rsplit("/", 2)[-2]
-                                if "/" in group.get("TargetGroupArn", "")
-                                else group.get("TargetGroupArn")
-                                for group in groups
-                            ]
-                            actions.append("forward → " + ", ".join(filter(None, names)))
+                        _, names = _action_target_groups(action)
+                        if names:
+                            actions.append("forward → " + ", ".join(names))
                         elif target_group_arn:
                             actions.append(
                                 "forward → " + target_group_arn.rsplit("/", 2)[-2]
@@ -203,13 +320,20 @@ def _describe_listeners(elbv2_client, load_balancer_arn: str) -> List[Dict[str, 
                     for cert in listener.get("Certificates", [])
                     if cert.get("CertificateArn")
                 ]
+                listener_arn = listener.get("ListenerArn")
                 listeners.append(
                     {
+                        "arn": listener_arn,
                         "port": listener.get("Port"),
                         "protocol": listener.get("Protocol"),
                         "ssl_policy": listener.get("SslPolicy"),
                         "default_actions": actions,
                         "certificates": certificates,
+                        "host_header_rules": (
+                            _describe_listener_host_rules(elbv2_client, listener_arn)
+                            if listener_arn
+                            else []
+                        ),
                     }
                 )
     except Exception:
@@ -351,7 +475,7 @@ def build_topology(
     load_balancers: List[Dict[str, Any]],
     target_groups: List[Dict[str, Any]],
     service_registries: List[Dict[str, Any]],
-    route53_index: Dict[str, List[str]],
+    route53_index: Dict[str, List[Any]],
 ) -> Dict[str, Any]:
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, str]] = []
@@ -435,20 +559,30 @@ def build_topology(
             edges.append({"from": lb_id, "to": ecs_id, "label": "routes traffic"})
 
         dns_name = load_balancer.get("dns_name", "")
-        record_names = route53_index.get(dns_name, []) if dns_name else []
-        if record_names:
-            for record_name in record_names[:3]:
+        records = lookup_route53_records(route53_index, dns_name)
+        load_balancer["dns_records"] = records
+        if records:
+            for record in records:
+                record_name = record["name"]
                 r53_id = _node_id("r53", record_name)
+                record_type = record.get("type") or "A"
+                detail = (
+                    f"Alias {record_type}"
+                    if record.get("alias")
+                    else str(record_type)
+                )
+                if record.get("zone_name"):
+                    detail += f" · {record['zone_name']}"
                 nodes.append(
                     {
                         "id": r53_id,
                         "type": NODE_ROUTE53,
                         "label": record_name,
-                        "detail": "DNS record",
+                        "detail": detail,
                     }
                 )
                 edges.append({"from": r53_id, "to": lb_id, "label": "alias"})
-            upstream_id = _node_id("r53", record_names[0])
+            upstream_id = _node_id("r53", records[0]["name"])
         else:
             upstream_id = lb_id
             if load_balancer.get("scheme") == "internet-facing":
@@ -528,6 +662,7 @@ def build_topology(
         summary_parts.append("ECR")
 
     http_hosts: List[str] = []
+    dns_records: List[Dict[str, Any]] = []
     for node in nodes:
         if node.get("type") == NODE_ROUTE53 and node.get("label"):
             http_hosts.append(node["label"])
@@ -535,6 +670,14 @@ def build_topology(
         dns_name = load_balancer.get("dns_name")
         if dns_name and dns_name not in http_hosts:
             http_hosts.append(dns_name)
+        for record in load_balancer.get("dns_records") or []:
+            dns_records.append(
+                {
+                    **record,
+                    "load_balancer": load_balancer.get("name"),
+                    "load_balancer_dns": dns_name,
+                }
+            )
 
     return {
         "status": "PASS",
@@ -544,6 +687,7 @@ def build_topology(
         "edges": edges,
         "notes": notes,
         "http_hosts": http_hosts,
+        "dns_records": dns_records,
         "load_balancers": load_balancers,
         "mermaid": build_mermaid(nodes, edges),
     }
@@ -777,7 +921,7 @@ def discover_connectivity(
     container_images: Optional[List[Dict[str, str]]],
     service_name: str,
     cluster_name: str,
-    route53_index: Dict[str, List[str]],
+    route53_index: Dict[str, List[Any]],
 ) -> Dict[str, Any]:
     load_balancers, target_groups = discover_load_balancers(elbv2_client, service)
     service_registries = discover_service_registries(sd_client, service)

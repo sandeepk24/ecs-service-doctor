@@ -23,8 +23,16 @@ import {
   collectClusterTargetGroups,
   TargetGroupsPanel,
 } from "./components/TargetGroupsPanel";
+import {
+  collectClusterDnsRecords,
+  Route53Panel,
+} from "./components/Route53Panel";
 
-type ClusterSection = "services" | "target-groups" | "load-balancers";
+type ClusterSection =
+  | "services"
+  | "target-groups"
+  | "load-balancers"
+  | "route-53";
 
 function serviceKey(item: ServiceResult) {
   return `${item.cluster}::${item.service}`;
@@ -110,6 +118,7 @@ export default function App() {
             const section = sectionByCluster[cluster] ?? "services";
             const targetGroups = collectClusterTargetGroups(services);
             const loadBalancers = collectClusterLoadBalancers(services);
+            const dnsRecords = collectClusterDnsRecords(services);
 
             return (
               <section
@@ -128,6 +137,7 @@ export default function App() {
                       ["services", "Services", services.length],
                       ["target-groups", "Target groups", targetGroups.length],
                       ["load-balancers", "Load balancers", loadBalancers.length],
+                      ["route-53", "Route 53", dnsRecords.length],
                     ] as const
                   ).map(([id, label, count]) => (
                     <button
@@ -190,13 +200,17 @@ export default function App() {
                 {section === "load-balancers" && (
                   <LoadBalancerPanel loadBalancers={loadBalancers} />
                 )}
+
+                {section === "route-53" && (
+                  <Route53Panel records={dnsRecords} />
+                )}
               </section>
             );
           })
         )}
 
         <footer className="footer">
-          ECS Health Report v{report.version} · Services, target groups, and load balancers
+          ECS Health Report v{report.version} · Services, target groups, load balancers, and Route 53
         </footer>
       </main>
     </div>

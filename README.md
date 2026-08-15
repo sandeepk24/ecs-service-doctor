@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.7.8**):
+Everything this repo provides today (**v0.7.9**):
 
 ### Application health checks
 
@@ -36,6 +36,7 @@ Everything this repo provides today (**v0.7.8**):
 - **CPU and memory** — reserved Fargate/EC2 size plus CloudWatch utilization (last 15 minutes); warns at 80%, fails at 90%
 - **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
 - **HTTP endpoint check** — optional/auto URL must return **HTTP 200** (configurable); fails the service when not 200
+- **Host-header routes** — ALB listener rules with host headers are probed separately (`https://{host}/health`)
 - **Green / red status lights** — green when the app is up (HTTP 200), red when it is not 200
 - **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
 - **Container image** — image URI/tag from the live task definition (what is actually deployed)
@@ -47,10 +48,11 @@ Shareable, self-contained HTML (no external assets after export):
 
 - **Executive snapshot** — one sentence plus compact fleet counts in the header
 - **Needs attention** — only the services that are not healthy, with a jump-to-service link
-- **Cluster tabs** — **Services**, **Target groups**, and **Load balancers** (not repeated on every service)
-- **Service picker** — green/red lights, then a short detail panel: capacity, CPU, memory, release, traffic, app, known-good versions, events
+- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, and **Route 53** (not repeated on every service)
+- **Service picker** — green/red lights, then a short detail panel: capacity, CPU, memory, release, traffic, app, host routes, known-good versions, events
 - **Target groups tab** — every group in the cluster once, with service, port, and healthy/unhealthy counts
 - **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
+- **Route 53 tab** — DNS records that alias or CNAME to those load balancers, with the services behind them
 - Sample: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### Continuous monitoring and alerts
@@ -68,7 +70,9 @@ Shareable, self-contained HTML (no external assets after export):
 - **Target group detection** — finds target groups attached to the ECS service
 - **Attachment validation** — target group exists, is attached to ALB/NLB, ECS container name/port matches the task definition
 - **Target health** — healthy, unhealthy, and registering target counts
-- **ALB / NLB details** — DNS, scheme, VPC, AZs, listeners, SSL policy
+- **ALB / NLB details** — DNS, scheme, VPC, AZs, listeners, SSL policy, host-header rules
+- **Route 53** — hosted-zone records that alias or CNAME to the ALB/NLB (including `dualstack.` targets)
+- **Host-header health** — each host-header rule that forwards to this service’s target group is checked on its own URL
 - **Classic ELB notice** — warns when a service uses a classic load balancer (ALB/NLB required for full TG checks)
 
 ### Stable tasks and rollback
@@ -254,11 +258,13 @@ Application and infrastructure signals together:
 | **CPU / Memory** | Reserved task size (vCPU / GiB) and last-15-minute CloudWatch utilization; warn at 80%, fail at 90% |
 | **Deployments** | Rollout finished or stuck with multiple active revisions |
 | **Load balancers** | Target groups detected, attached to ALB/NLB, container port matches task definition |
+| **Route 53** | Hosted-zone records that alias or CNAME to the service ALB/NLB |
 | **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
 | **Container image** | Which image/tag is actually deployed (from the task definition) |
 | **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
 | **Stable tasks** | Last 3 task definitions that ran stably — with image tag and a copy-paste rollback command |
 | **HTTP** | Application URL returns expected status (default **200**); alerts when not 200 |
+| **Host headers** | ALB listener rules with host headers get a separate HTTP check per hostname |
 | **Connectivity** | Rough path diagram: Route 53 → ALB/NLB → target group → ECS → inferred backends (RDS, DynamoDB, ElastiCache, etc. from env/secrets) → ECR |
 
 This is **read-only** — it inspects your services and produces a CLI summary, JSON for CI/CD, or a shareable HTML **Service Health Report**.
@@ -455,9 +461,9 @@ The HTML report is built for **leadership scan, then drill-down**:
 
 - One-sentence executive snapshot (healthy vs needs attention) and compact fleet counts
 - Attention list of only the services that are not healthy
-- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**
-- Service details: capacity, CPU, memory, release, traffic, HTTP 200, known-good versions, events
-- Target groups and load balancers listed once per cluster (not copied onto every service)
+- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**, **Route 53**
+- Service details: capacity, CPU, memory, release, traffic, HTTP 200, host-header routes, known-good versions, events
+- Target groups, load balancers, and Route 53 records listed once per cluster
 
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
 
@@ -486,6 +492,7 @@ Read-only access only:
 - `cloudwatch:GetMetricData`
 - `elasticloadbalancing:DescribeLoadBalancers`
 - `elasticloadbalancing:DescribeListeners`
+- `elasticloadbalancing:DescribeRules`
 - `elasticloadbalancing:DescribeTargetGroups`
 - `elasticloadbalancing:DescribeTargetHealth`
 - `route53:ListHostedZones`

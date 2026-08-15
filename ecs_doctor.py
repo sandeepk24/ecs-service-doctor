@@ -34,7 +34,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -55,7 +55,7 @@ from topology import (
 )
 
 
-VERSION = "0.7.6"
+VERSION = "0.7.7"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -320,6 +320,216 @@ def get_container_images(task_definition: Dict[str, Any]) -> List[Dict[str, str]
         }
         for container in task_definition.get("containerDefinitions", [])
     ]
+
+
+def _as_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_cpu_reserved(cpu: Any) -> Optional[str]:
+    units = _as_int(cpu)
+    if units is None:
+        return str(cpu) if cpu else None
+    vcpu = units / 1024
+    if units % 256 == 0:
+        if vcpu == 1:
+            return "1 vCPU"
+        if vcpu == int(vcpu):
+            return f"{int(vcpu)} vCPU"
+        return f"{vcpu:g} vCPU"
+    return f"{units} CPU units"
+
+
+def format_memory_reserved(memory: Any) -> Optional[str]:
+    mib = _as_int(memory)
+    if mib is None:
+        return str(memory) if memory else None
+    if mib >= 1024 and mib % 1024 == 0:
+        return f"{mib // 1024} GiB"
+    if mib >= 1024:
+        return f"{mib / 1024:.1f} GiB"
+    return f"{mib} MiB"
+
+
+def extract_task_resources(
+    task_definition: Optional[Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[str]]:
+    if not task_definition:
+        return None, None
+
+    cpu = task_definition.get("cpu")
+    memory = task_definition.get("memory")
+    if cpu and memory:
+        return str(cpu), str(memory)
+
+    cpu_total = 0
+    memory_total = 0
+    found_cpu = False
+    found_memory = False
+    for container in task_definition.get("containerDefinitions", []):
+        container_cpu = _as_int(container.get("cpu"))
+        container_memory = _as_int(
+            container.get("memory") or container.get("memoryReservation")
+        )
+        if container_cpu is not None:
+            cpu_total += container_cpu
+            found_cpu = True
+        if container_memory is not None:
+            memory_total += container_memory
+            found_memory = True
+
+    return (
+        str(cpu_total) if found_cpu else (str(cpu) if cpu else None),
+        str(memory_total) if found_memory else (str(memory) if memory else None),
+    )
+
+
+def fetch_service_utilization(
+    cloudwatch_client,
+    cluster_name: str,
+    service_name: str,
+    lookback_minutes: int = 15,
+    period_seconds: int = 300,
+) -> Dict[str, Optional[float]]:
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(minutes=lookback_minutes)
+    dimensions = [
+        {"Name": "ClusterName", "Value": cluster_name},
+        {"Name": "ServiceName", "Value": service_name},
+    ]
+    response = cloudwatch_client.get_metric_data(
+        MetricDataQueries=[
+            {
+                "Id": "cpu",
+                "MetricStat": {
+                    "Metric": {
+                        "Namespace": "AWS/ECS",
+                        "MetricName": "CPUUtilization",
+                        "Dimensions": dimensions,
+                    },
+                    "Period": period_seconds,
+                    "Stat": "Average",
+                },
+                "ReturnData": True,
+            },
+            {
+                "Id": "memory",
+                "MetricStat": {
+                    "Metric": {
+                        "Namespace": "AWS/ECS",
+                        "MetricName": "MemoryUtilization",
+                        "Dimensions": dimensions,
+                    },
+                    "Period": period_seconds,
+                    "Stat": "Average",
+                },
+                "ReturnData": True,
+            },
+        ],
+        StartTime=start,
+        EndTime=end,
+        ScanBy="TimestampDescending",
+    )
+
+    values: Dict[str, Optional[float]] = {"cpu": None, "memory": None}
+    for result in response.get("MetricDataResults", []):
+        metric_id = result.get("Id")
+        points = result.get("Values") or []
+        if metric_id in values and points:
+            values[metric_id] = sum(points) / len(points)
+    return values
+
+
+def _utilization_status(
+    utilization: Optional[float],
+    warn_percent: float,
+    fail_percent: float,
+) -> str:
+    if utilization is None:
+        return STATUS_PASS
+    if utilization >= fail_percent:
+        return STATUS_FAIL
+    if utilization >= warn_percent:
+        return STATUS_WARN
+    return STATUS_PASS
+
+
+def _resource_part(
+    kind: str,
+    reserved: Optional[str],
+    utilization: Optional[float],
+    warn_percent: float,
+    fail_percent: float,
+) -> Dict[str, Any]:
+    reserved_label = (
+        format_cpu_reserved(reserved)
+        if kind == "cpu"
+        else format_memory_reserved(reserved)
+    )
+    bits: List[str] = []
+    if utilization is not None:
+        bits.append(f"{utilization:.0f}% average")
+    if reserved_label:
+        bits.append(f"reserved {reserved_label}")
+    if utilization is None and reserved_label:
+        bits.append("utilization not available")
+    if not bits:
+        bits.append(f"{kind.upper()} data not available")
+
+    return {
+        "status": _utilization_status(utilization, warn_percent, fail_percent),
+        "message": " · ".join(bits),
+        "reserved": reserved,
+        "reserved_label": reserved_label,
+        "utilization": None if utilization is None else round(utilization, 1),
+    }
+
+
+def evaluate_cpu_memory(
+    task_definition: Optional[Dict[str, Any]],
+    utilization: Optional[Dict[str, Optional[float]]] = None,
+    cpu_warn_percent: float = 80,
+    cpu_fail_percent: float = 90,
+    memory_warn_percent: float = 80,
+    memory_fail_percent: float = 90,
+    lookback_minutes: int = 15,
+) -> Dict[str, Any]:
+    cpu_reserved, memory_reserved = extract_task_resources(task_definition)
+    metrics = utilization or {}
+    cpu = _resource_part(
+        "cpu",
+        cpu_reserved,
+        metrics.get("cpu"),
+        cpu_warn_percent,
+        cpu_fail_percent,
+    )
+    memory = _resource_part(
+        "memory",
+        memory_reserved,
+        metrics.get("memory"),
+        memory_warn_percent,
+        memory_fail_percent,
+    )
+    statuses = [cpu["status"], memory["status"]]
+    if STATUS_FAIL in statuses:
+        status = STATUS_FAIL
+    elif STATUS_WARN in statuses:
+        status = STATUS_WARN
+    else:
+        status = STATUS_PASS
+
+    return {
+        "status": status,
+        "message": f"CPU {cpu['message']} · Memory {memory['message']}",
+        "cpu": cpu,
+        "memory": memory,
+        "lookback_minutes": lookback_minutes,
+    }
 
 
 def get_target_group_health(elbv2_client, target_group_arn: str) -> Dict[str, Any]:
@@ -1202,6 +1412,7 @@ def inspect_service(
     prefetch_error: Optional[str] = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
     route53_index: Optional[Dict[str, List[str]]] = None,
+    cloudwatch_client=None,
 ) -> Dict[str, Any]:
     service_name = service_config["name"]
     expected_desired_count = service_config.get("expected_desired_count")
@@ -1256,7 +1467,9 @@ def inspect_service(
 
         if checks_config.get("include_task_definition", True) or checks_config.get(
             "include_connectivity_diagram", True
-        ) or checks_config.get("include_target_group_health", True):
+        ) or checks_config.get("include_target_group_health", True) or checks_config.get(
+            "include_cpu_memory", True
+        ):
             task_definition = describe_task_definition(
                 ecs_client, service["taskDefinition"]
             )
@@ -1275,6 +1488,29 @@ def inspect_service(
                 ),
                 "container_images": container_images,
             }
+
+        if checks_config.get("include_cpu_memory", True):
+            utilization: Dict[str, Optional[float]] = {"cpu": None, "memory": None}
+            lookback_minutes = int(checks_config.get("resource_lookback_minutes", 15))
+            if cloudwatch_client is not None:
+                try:
+                    utilization = fetch_service_utilization(
+                        cloudwatch_client,
+                        cluster_name,
+                        service_name,
+                        lookback_minutes=lookback_minutes,
+                    )
+                except ClientError:
+                    utilization = {"cpu": None, "memory": None}
+            result["checks"]["resources"] = evaluate_cpu_memory(
+                task_definition,
+                utilization,
+                cpu_warn_percent=float(checks_config.get("cpu_warn_percent", 80)),
+                cpu_fail_percent=float(checks_config.get("cpu_fail_percent", 90)),
+                memory_warn_percent=float(checks_config.get("memory_warn_percent", 80)),
+                memory_fail_percent=float(checks_config.get("memory_fail_percent", 90)),
+                lookback_minutes=lookback_minutes,
+            )
 
         if checks_config.get("include_target_group_health", True):
             result["checks"]["target_group_health"] = evaluate_target_health(
@@ -1372,12 +1608,16 @@ def update_summary(summary: Dict[str, int], service_result: Dict[str, Any]) -> N
 
 def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
     session = create_session(config)
+    aws_config = config.get("aws", {})
+    checks_config = config.get("checks", {})
     ecs_client = session.client("ecs")
     elbv2_client = session.client("elbv2")
     sd_client = session.client("servicediscovery")
-
-    aws_config = config.get("aws", {})
-    checks_config = config.get("checks", {})
+    cloudwatch_client = (
+        session.client("cloudwatch")
+        if checks_config.get("include_cpu_memory", True)
+        else None
+    )
     max_workers = aws_config.get("max_workers", DEFAULT_MAX_WORKERS)
 
     route53_index: Dict[str, List[str]] = {}
@@ -1454,6 +1694,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
                 prefetch_error,
                 max_workers,
                 route53_index,
+                cloudwatch_client,
             )
             for cluster_name, service_config, prefetched_service, prefetch_error in work_items
         ]
@@ -1522,6 +1763,15 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
             lines.append(f"  HTTP: {http_health.get('message', 'OK')}")
         else:
             lines.append(f"  HTTP: {http_health.get('message', 'not 200')}")
+
+    resources = checks.get("resources")
+    if resources:
+        cpu = resources.get("cpu") or {}
+        memory = resources.get("memory") or {}
+        if cpu.get("message"):
+            lines.append(f"  CPU: {cpu['message']}")
+        if memory.get("message"):
+            lines.append(f"  Memory: {memory['message']}")
 
     stable_tasks = checks.get("stable_tasks", {})
     for task in stable_tasks.get("stable_tasks", [])[:3]:
@@ -1642,6 +1892,15 @@ def print_human_report(report: Dict[str, Any]) -> None:
         http_health = checks.get("http_health")
         if http_health:
             print(f"  HTTP Health     : [{http_health['status']}] {http_health['message']}")
+
+        resources = checks.get("resources")
+        if resources:
+            cpu = resources.get("cpu") or {}
+            memory = resources.get("memory") or {}
+            if cpu.get("message"):
+                print(f"  CPU             : [{cpu.get('status', resources['status'])}] {cpu['message']}")
+            if memory.get("message"):
+                print(f"  Memory          : [{memory.get('status', resources['status'])}] {memory['message']}")
 
         stable_tasks = checks.get("stable_tasks")
         if stable_tasks and stable_tasks.get("stable_tasks"):
@@ -2162,6 +2421,27 @@ def build_sample_report() -> Dict[str, Any]:
             *_sample_healthy_services(),
         ],
     }
+
+    resource_samples = {
+        "orders-api": (512, 1024, 18.0, 41.0),
+        "agents-service": (256, 512, 81.0, 47.0),
+        "payments-api": (1024, 2048, 64.0, 93.0),
+        "catalog-api": (256, 512, 12.0, 28.0),
+        "search-api": (512, 1024, 22.0, 35.0),
+        "billing-api": (256, 512, 9.0, 24.0),
+        "notifications-worker": (256, 512, 6.0, 19.0),
+    }
+    for item in report["results"]:
+        cpu, memory, cpu_util, memory_util = resource_samples.get(
+            item["service"], (256, 512, 10.0, 20.0)
+        )
+        item["checks"]["resources"] = evaluate_cpu_memory(
+            {"cpu": str(cpu), "memory": str(memory)},
+            {"cpu": cpu_util, "memory": memory_util},
+        )
+        task_definition = item["checks"].setdefault("task_definition", {})
+        task_definition["cpu"] = str(cpu)
+        task_definition["memory"] = str(memory)
 
     peer_hints = {
         "orders-api": [

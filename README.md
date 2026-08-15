@@ -32,6 +32,7 @@ Everything this repo provides today (v0.7.0):
 ### Application health checks
 
 - **Task counts** — running vs desired vs pending; optional expected desired count per service
+- **CPU and memory** — reserved task size plus CloudWatch utilization; warns at 80% and fails at 90%
 - **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
 - **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
 - **Container image** — image URI/tag from the live task definition (what is actually deployed)
@@ -100,7 +101,7 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 - Cluster tabs for Services, Target groups, and Load balancers
 - Service picker with green / red lights for HTTP 200 vs not 200
 - Target groups and load balancers listed once per cluster, not repeated on every service
-- Service details stay short: health checks, known-good versions, events
+- Service details stay short: health checks, CPU, memory, known-good versions, events
 - Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### CI/CD and safety
@@ -237,6 +238,7 @@ Application and infrastructure signals together:
 | Area | What you learn |
 |------|----------------|
 | **Tasks** | Running vs desired count — is the app scaled correctly? |
+| **CPU / Memory** | Reserved task size and last-15-minute CloudWatch utilization |
 | **Deployments** | Rollout finished or stuck with multiple active revisions |
 | **Load balancers** | Target groups detected, attached to ALB/NLB, container port matches task definition |
 | **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
@@ -324,6 +326,22 @@ In an advanced config file you can tune stable task history:
 
 Set `include_stable_task_history` to `false` to skip this check. Increase `stable_task_limit` if you want more than 3 rollback candidates (default: `3`).
 
+### CPU and memory (optional)
+
+```json
+{
+  "checks": {
+    "include_cpu_memory": true,
+    "cpu_warn_percent": 80,
+    "cpu_fail_percent": 90,
+    "memory_warn_percent": 80,
+    "memory_fail_percent": 90
+  }
+}
+```
+
+Utilization comes from CloudWatch `AWS/ECS` `CPUUtilization` and `MemoryUtilization` over the last 15 minutes. Set `include_cpu_memory` to `false` to skip this check.
+
 ---
 
 ## Config file (optional)
@@ -409,7 +427,7 @@ The HTML report is built for **leadership scan, then drill-down**:
 - Attention list of only the services that are not healthy
 - Cluster tabs for Services, Target groups, and Load balancers
 - Green / red lights for HTTP 200 vs not 200
-- Engineering drill-down: known-good versions, events, plus cluster-wide TG and ALB/NLB views
+- Engineering drill-down: CPU, memory, known-good versions, events, plus cluster-wide TG and ALB/NLB views
 
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
 
@@ -435,6 +453,7 @@ Read-only access only:
 - `ecs:DescribeTaskDefinition`
 - `ecs:ListTasks`
 - `ecs:DescribeTasks`
+- `cloudwatch:GetMetricData`
 - `elasticloadbalancing:DescribeLoadBalancers`
 - `elasticloadbalancing:DescribeListeners`
 - `elasticloadbalancing:DescribeTargetGroups`

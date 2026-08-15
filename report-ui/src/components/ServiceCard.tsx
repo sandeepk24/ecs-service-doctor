@@ -74,6 +74,9 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
   const checks = item.checks ?? {};
   const events = checks.recent_events?.events ?? [];
   const images = checks.task_definition?.container_images ?? [];
+  const resources = checks.resources;
+  const cpu = resources?.cpu as ReportCheck | undefined;
+  const memory = resources?.memory as ReportCheck | undefined;
 
   if (item.error) {
     return <div className="service-error">{item.error}</div>;
@@ -99,6 +102,16 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
           label="Capacity"
           status={checks.task_counts?.status}
           message={checks.task_counts?.message}
+        />
+        <CheckRow
+          label="CPU"
+          status={cpu?.status}
+          message={cpu?.message}
+        />
+        <CheckRow
+          label="Memory"
+          status={memory?.status}
+          message={memory?.message}
         />
         <CheckRow
           label="Release"

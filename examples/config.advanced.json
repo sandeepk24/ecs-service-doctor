@@ -14,7 +14,12 @@
     "http_health_path": "/health",
     "http_timeout_seconds": 5,
     "include_stable_task_history": true,
-    "stable_task_limit": 3
+    "stable_task_limit": 3,
+    "include_cpu_memory": true,
+    "cpu_warn_percent": 80,
+    "cpu_fail_percent": 90,
+    "memory_warn_percent": 80,
+    "memory_fail_percent": 90
   },
   "notifications": {
     "on_fail": true,

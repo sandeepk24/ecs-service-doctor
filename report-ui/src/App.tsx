@@ -9,6 +9,7 @@ import {
   sortBySeverity,
   statusLabel,
   serviceLight,
+  serviceSnapshot,
 } from "./utils";
 import type { ServiceResult } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
@@ -158,7 +159,7 @@ export default function App() {
 
                 {section === "services" && (
                   <>
-                    <div className="service-tabs" role="tablist" aria-label={`${cluster} services`}>
+                    <div className="service-tiles" role="tablist" aria-label={`${cluster} services`}>
                       {ordered.map((item) => {
                         const key = serviceKey(item);
                         const active = selected && serviceKey(selected) === key;
@@ -168,11 +169,19 @@ export default function App() {
                             type="button"
                             role="tab"
                             aria-selected={active}
-                            className={`service-tab ${item.status.toLowerCase()}${active ? " active" : ""}`}
+                            className={`service-tile ${item.status.toLowerCase()}${active ? " active" : ""}`}
                             onClick={() => setSelectedKey(key)}
                           >
-                            <StatusLight light={serviceLight(item)} />
-                            <span>{item.service}</span>
+                            <span className="service-tile-top">
+                              <StatusLight light={serviceLight(item)} />
+                              <span className="service-tile-state">
+                                {statusLabel(item.status)}
+                              </span>
+                            </span>
+                            <strong>{item.service}</strong>
+                            <span className="service-tile-snap">
+                              {serviceSnapshot(item)}
+                            </span>
                           </button>
                         );
                       })}

@@ -3,31 +3,33 @@
   --font-body: "Figtree", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  --bg-0: #14110e;
-  --bg-1: #1c1814;
-  --bg-2: #26201a;
-  --card: rgba(38, 31, 26, 0.78);
-  --card-border: rgba(214, 176, 132, 0.18);
-  --text: #f4efe6;
-  --muted: #b5a89a;
-  --line: rgba(214, 176, 132, 0.14);
+  --picotte: #1a4d73;
+  --celeste: #9eeaf4;
+  --bg-0: #071824;
+  --bg-1: #0c2438;
+  --bg-2: #143a58;
+  --card: rgba(18, 62, 94, 0.55);
+  --card-border: rgba(158, 234, 244, 0.2);
+  --text: #eef9fc;
+  --muted: #8fb8c8;
+  --line: rgba(158, 234, 244, 0.14);
 
-  --pass: #86b87a;
-  --pass-bg: rgba(134, 184, 122, 0.16);
-  --pass-glow: rgba(134, 184, 122, 0.28);
+  --pass: #7dcea0;
+  --pass-bg: rgba(125, 206, 160, 0.16);
+  --pass-glow: rgba(125, 206, 160, 0.28);
 
-  --warn: #d4a054;
-  --warn-bg: rgba(212, 160, 84, 0.16);
-  --warn-glow: rgba(212, 160, 84, 0.28);
+  --warn: #e0c36a;
+  --warn-bg: rgba(224, 195, 106, 0.16);
+  --warn-glow: rgba(224, 195, 106, 0.28);
 
-  --fail: #d46a55;
-  --fail-bg: rgba(212, 106, 85, 0.16);
-  --fail-glow: rgba(212, 106, 85, 0.3);
+  --fail: #e07a6a;
+  --fail-bg: rgba(224, 122, 106, 0.16);
+  --fail-glow: rgba(224, 122, 106, 0.3);
 
-  --accent-a: #c45c26;
-  --accent-b: #c9a227;
-  --accent-c: #4a6b5c;
-  --shadow: 0 28px 70px rgba(20, 12, 8, 0.45);
+  --accent-a: #1a4d73;
+  --accent-b: #9eeaf4;
+  --accent-c: #2a6f99;
+  --shadow: 0 28px 70px rgba(4, 16, 28, 0.5);
 }
 
 * {
@@ -45,9 +47,9 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   background:
-    radial-gradient(circle at 12% -10%, rgba(196, 92, 38, 0.22), transparent 32%),
-    radial-gradient(circle at 88% 8%, rgba(74, 107, 92, 0.22), transparent 28%),
-    linear-gradient(180deg, var(--bg-0), #100d0b 58%, #0c0a08);
+    radial-gradient(circle at 12% -10%, rgba(26, 77, 115, 0.55), transparent 34%),
+    radial-gradient(circle at 88% 8%, rgba(158, 234, 244, 0.18), transparent 30%),
+    linear-gradient(180deg, var(--bg-0), #06141f 58%, #041018);
 }
 
 .page {
@@ -99,7 +101,7 @@ body {
 
 .hero {
   background:
-    linear-gradient(145deg, rgba(196, 92, 38, 0.16), rgba(74, 107, 92, 0.1) 42%, transparent 70%),
+    linear-gradient(145deg, rgba(26, 77, 115, 0.35), rgba(158, 234, 244, 0.1) 42%, transparent 70%),
     var(--card);
   border-radius: 26px;
   padding: 1.85rem 1.8rem;
@@ -118,7 +120,7 @@ body {
   font-size: 0.78rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #e0c9a8;
+  color: var(--celeste);
   font-weight: 600;
 }
 
@@ -129,7 +131,7 @@ body {
   font-weight: 600;
   font-optical-sizing: auto;
   letter-spacing: -0.035em;
-  background: linear-gradient(135deg, #fffaf3 8%, #ead9c4 48%, #e8b86d 100%);
+  background: linear-gradient(135deg, #f4fcfe 8%, #9eeaf4 55%, #6ec4d8 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -215,7 +217,7 @@ body {
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #e0c9a8;
+  color: var(--celeste);
   font-weight: 700;
 }
 
@@ -250,14 +252,14 @@ body {
   padding: 0.75rem 0.85rem;
   border-radius: 14px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.35);
+  background: rgba(8, 28, 44, 0.35);
   color: inherit;
   cursor: pointer;
   font: inherit;
 }
 
 .attention-item:hover {
-  border-color: rgba(224, 201, 168, 0.32);
+  border-color: rgba(158, 234, 244, 0.32);
 }
 
 .attention-item strong,
@@ -335,7 +337,7 @@ body {
 
 .section-tab.active {
   color: var(--text);
-  border-bottom-color: #c45c26;
+  border-bottom-color: var(--celeste);
 }
 
 .empty-panel {
@@ -366,8 +368,8 @@ body {
   border-radius: 18px;
   border: 1px solid var(--line);
   background:
-    linear-gradient(180deg, rgba(255, 248, 238, 0.05), transparent 42%),
-    rgba(20, 16, 13, 0.45);
+    linear-gradient(180deg, rgba(158, 234, 244, 0.08), transparent 42%),
+    rgba(8, 28, 44, 0.5);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -376,16 +378,16 @@ body {
 }
 
 .service-tile:hover {
-  border-color: rgba(224, 201, 168, 0.4);
+  border-color: rgba(158, 234, 244, 0.4);
   transform: translateY(-1px);
 }
 
 .service-tile.active {
-  border-color: rgba(196, 92, 38, 0.55);
+  border-color: rgba(158, 234, 244, 0.55);
   background:
-    linear-gradient(180deg, rgba(196, 92, 38, 0.16), transparent 55%),
-    rgba(28, 22, 18, 0.7);
-  box-shadow: inset 0 0 0 1px rgba(196, 92, 38, 0.18);
+    linear-gradient(180deg, rgba(26, 77, 115, 0.45), transparent 55%),
+    rgba(10, 36, 56, 0.75);
+  box-shadow: inset 0 0 0 1px rgba(158, 234, 244, 0.2);
 }
 
 .service-tile.fail {
@@ -439,7 +441,7 @@ body {
   padding: 1rem;
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.28);
+  background: rgba(8, 28, 44, 0.28);
 }
 
 .service-tab-panel-head {
@@ -558,7 +560,7 @@ body {
   padding: 1.1rem 1.15rem;
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.28);
+  background: rgba(8, 28, 44, 0.28);
   box-shadow: none;
 }
 
@@ -584,7 +586,7 @@ body {
 }
 
 .mesh-summary {
-  color: #e0c9a8;
+  color: var(--celeste);
   font-size: 0.86rem;
 }
 
@@ -609,7 +611,7 @@ body {
   padding: 0.55rem 0.7rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(24, 18, 14, 0.55);
+  background: rgba(10, 32, 48, 0.55);
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -652,7 +654,7 @@ body {
   width: 100%;
   text-align: left;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.35);
+  background: rgba(8, 28, 44, 0.35);
   color: inherit;
   border-radius: 12px;
   padding: 0.65rem 0.8rem;
@@ -698,7 +700,7 @@ body {
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #e0c9a8;
+  color: var(--celeste);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -787,7 +789,7 @@ body {
   margin-top: 0.25rem;
   padding: 0.55rem 0.65rem;
   border-radius: 10px;
-  background: rgba(20, 16, 13, 0.45);
+  background: rgba(8, 28, 44, 0.45);
   border: 1px solid var(--line);
   font-family: var(--font-mono);
   font-size: 0.78rem;
@@ -877,7 +879,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.35);
+  background: rgba(8, 28, 44, 0.35);
 }
 
 .target-group-item.ok {
@@ -953,7 +955,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.35);
+  background: rgba(8, 28, 44, 0.35);
 }
 
 .stable-task-title {
@@ -970,8 +972,8 @@ body {
   text-transform: uppercase;
   padding: 0.15rem 0.4rem;
   border-radius: 999px;
-  background: rgba(196, 92, 38), 0.18);
-  color: #ead9c4;
+  background: rgba(26, 77, 115, 0.18);
+  color: #c5eef5;
 }
 
 .stable-task-image,
@@ -1090,7 +1092,7 @@ body {
 
 .topology-summary {
   font-size: 0.82rem;
-  color: #e0c9a8;
+  color: var(--celeste);
 }
 
 .topology-flow {
@@ -1112,7 +1114,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(20, 16, 13, 0.45);
+  background: rgba(8, 28, 44, 0.45);
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -1124,8 +1126,8 @@ body {
 }
 
 .topology-node.load-balancer {
-  border-color: rgba(201, 162, 39, 0.35);
-  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.12);
+  border-color: rgba(158, 234, 244, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(158, 234, 244, 0.12);
 }
 
 .topology-node.target-group {
@@ -1134,8 +1136,8 @@ body {
 }
 
 .topology-node.ecs {
-  border-color: rgba(196, 92, 38), 0.45);
-  box-shadow: inset 0 0 0 1px rgba(196, 92, 38), 0.18);
+  border-color: rgba(26, 77, 115, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(26, 77, 115, 0.18);
 }
 
 .topology-node.database {
@@ -1246,7 +1248,7 @@ body {
 }
 
 .topology-edge-list span {
-  color: #e0c9a8;
+  color: var(--celeste);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1312,8 +1314,8 @@ body {
 .dns-card {
   padding: 0.8rem 0.85rem;
   border-radius: 12px;
-  border: 1px solid rgba(196, 92, 38), 0.28);
-  background: rgba(20, 16, 13, 0.4);
+  border: 1px solid rgba(26, 77, 115, 0.28);
+  background: rgba(8, 28, 44, 0.4);
 }
 
 .dns-card header {
@@ -1329,7 +1331,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #d4a574;
+  color: var(--celeste);
 }
 
 .lb-list {
@@ -1340,8 +1342,8 @@ body {
 .lb-card {
   padding: 0.8rem 0.85rem;
   border-radius: 12px;
-  border: 1px solid rgba(201, 162, 39, 0.28);
-  background: rgba(20, 16, 13, 0.4);
+  border: 1px solid rgba(158, 234, 244, 0.28);
+  background: rgba(8, 28, 44, 0.4);
 }
 
 .lb-card header {
@@ -1357,7 +1359,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #e8b86d;
+  color: var(--celeste);
 }
 
 .lb-state {

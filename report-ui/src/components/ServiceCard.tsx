@@ -52,12 +52,11 @@ export function ServiceOpsCard({
     >
       <header>
         <span className={`status-pulse ${tone}`} />
-        <strong title={item.service}>{item.service}</strong>
+        <strong>{item.service}</strong>
         <StatusBadge status={item.status} label={statusLabel(item.status)} />
       </header>
       <p>
-        {item.cluster}
-        {metrics.env ? ` · ${metrics.env}` : ""}
+        {[metrics.env, item.launch_type].filter(Boolean).join(" · ") || item.cluster}
       </p>
       <div className="ops-metric-grid">
         <Metric label="Tasks" value={tasks} />

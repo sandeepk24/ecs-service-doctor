@@ -59,7 +59,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"

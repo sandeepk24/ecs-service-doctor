@@ -3,15 +3,15 @@
   --font-body: Calibri, Tahoma, "Segoe UI", sans-serif;
   --font-mono: Consolas, "Courier New", monospace;
 
-  --bg-0: #002a4a;
-  --bg-1: #00365c;
-  --bg-2: #004170;
-  --card: #004170;
-  --card-border: rgba(180, 220, 255, 0.22);
-  --text: #f4f8fc;
-  --muted: #b7cfe3;
-  --line: rgba(180, 220, 255, 0.16);
-  --highlight: #8ec8f0;
+  --bg-0: #07111f;
+  --bg-1: #0c1c30;
+  --bg-2: #132844;
+  --card: #16324f;
+  --card-border: rgba(148, 188, 222, 0.2);
+  --text: #eef4fb;
+  --muted: #9db4c9;
+  --line: rgba(148, 188, 222, 0.16);
+  --highlight: #7eb3d9;
 
   --healthy: #3dd68c;
   --healthy-bg: rgba(61, 214, 140, 0.16);
@@ -53,8 +53,8 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   background:
-    radial-gradient(ellipse at 20% -10%, rgba(255, 255, 255, 0.18), transparent 42%),
-    linear-gradient(180deg, #00548a 0%, #004170 48%, #003258 100%);
+    radial-gradient(ellipse at 18% -8%, rgba(90, 140, 190, 0.22), transparent 44%),
+    linear-gradient(180deg, #1a3554 0%, #10263e 48%, #0a1828 100%);
 }
 
 .page {
@@ -96,7 +96,6 @@ body {
 .empty,
 .kpi-card,
 .health-bar,
-.ops-service-card,
 .service-tab-panel {
   background:
     linear-gradient(
@@ -1666,80 +1665,120 @@ body {
 
 .ops-service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  justify-items: center;
+  gap: 0.85rem 0.55rem;
   margin-bottom: 1rem;
 }
 
 .ops-service-card {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
-  text-align: left;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  width: min(100%, 176px);
+  aspect-ratio: 1;
+  padding: 14% 11% 12%;
+  border-radius: 50%;
+  border: 1px solid rgba(190, 220, 245, 0.28);
   color: inherit;
   font: inherit;
   cursor: pointer;
-  padding: 0.75rem 0.85rem;
-  border-radius: 14px;
-  border: 1px solid var(--card-border);
-  min-width: 0;
+  text-align: center;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.42), transparent 34%),
+    radial-gradient(circle at 70% 18%, rgba(126, 179, 217, 0.18), transparent 32%),
+    radial-gradient(circle at 50% 118%, rgba(0, 0, 0, 0.55), transparent 52%),
+    linear-gradient(165deg, #2a5274 0%, #16324f 42%, #0c2036 100%);
+  box-shadow:
+    inset 0 3px 6px rgba(255, 255, 255, 0.28),
+    inset 0 -14px 22px rgba(0, 8, 18, 0.42),
+    0 16px 22px rgba(4, 10, 20, 0.42),
+    0 3px 0 rgba(255, 255, 255, 0.08);
 }
 
 .ops-service-card.active {
-  border-color: rgba(122, 162, 214, 0.45);
-  background: var(--bg-2);
+  box-shadow:
+    inset 0 3px 6px rgba(255, 255, 255, 0.3),
+    inset 0 -14px 22px rgba(0, 8, 18, 0.4),
+    0 0 0 3px rgba(126, 179, 217, 0.55),
+    0 16px 22px rgba(4, 10, 20, 0.42);
 }
 
 .ops-service-card.critical {
-  border-left: 3px solid var(--critical);
+  box-shadow:
+    inset 0 3px 6px rgba(255, 255, 255, 0.28),
+    inset 0 -14px 22px rgba(0, 8, 18, 0.42),
+    0 0 0 3px rgba(240, 113, 120, 0.7),
+    0 16px 22px rgba(4, 10, 20, 0.42);
 }
 
 .ops-service-card.warning {
-  border-left: 3px solid var(--warning);
+  box-shadow:
+    inset 0 3px 6px rgba(255, 255, 255, 0.28),
+    inset 0 -14px 22px rgba(0, 8, 18, 0.42),
+    0 0 0 3px rgba(232, 184, 74, 0.7),
+    0 16px 22px rgba(4, 10, 20, 0.42);
 }
 
 .ops-service-card.healthy {
-  border-left: 3px solid var(--healthy);
+  box-shadow:
+    inset 0 3px 6px rgba(255, 255, 255, 0.28),
+    inset 0 -14px 22px rgba(0, 8, 18, 0.42),
+    0 0 0 3px rgba(61, 214, 140, 0.55),
+    0 16px 22px rgba(4, 10, 20, 0.42);
 }
 
 .ops-service-card header {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
+  gap: 0.28rem;
 }
 
 .ops-service-card header strong {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.98rem;
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.12;
+  font-size: 0.78rem;
+}
+
+.ops-service-card .status-badge {
+  font-size: 0.58rem;
+  padding: 0.12rem 0.4rem;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
 }
 
 .ops-service-card > p {
-  margin: 0;
+  margin: 0.12rem 0 0.22rem;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.62rem;
+  overflow-wrap: anywhere;
 }
 
 .ops-metric-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.45rem 0.7rem;
+  gap: 0.12rem 0.35rem;
+  width: 100%;
 }
 
 .ops-metric span {
   display: block;
-  font-size: 0.68rem;
+  font-size: 0.55rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
 .ops-metric strong {
-  font-size: 0.92rem;
+  font-size: 0.78rem;
 }
 
 .ops-metric.healthy strong {
@@ -1756,18 +1795,19 @@ body {
 
 .ops-service-card footer {
   display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.08rem;
+  margin-top: 0.2rem;
   color: var(--muted);
-  font-size: 0.75rem;
-  min-width: 0;
+  font-size: 0.58rem;
 }
 
 .ops-service-card footer .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.72rem;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.58rem;
 }
 
 .ops-detail-meta,
@@ -1820,6 +1860,10 @@ body {
 
   .ops-header-side {
     align-items: flex-start;
+  }
+
+  .ops-service-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
 }
 

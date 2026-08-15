@@ -36,6 +36,8 @@ Everything this repo provides today (v0.7.0):
 - **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
 - **Container image** — image URI/tag from the live task definition (what is actually deployed)
 - **HTTP endpoint check** — optional/auto URL must return **HTTP 200** (configurable); fails the service when not 200
+- **Green / red status lights** — green when the app is up (HTTP 200), red when it is not 200
+- **Service-to-service map** — shows which services call each other and whether the destination is reachable
 - **Pass / warn / fail** — per-check and per-service status with plain-language summaries
 
 ### Continuous monitoring and alerts
@@ -96,6 +98,8 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 
 - Executive snapshot in one sentence, plus counts for healthy / attention / unhealthy
 - Compact fleet table (one row per service) so 7+ services stay scannable
+- Green / red lights for HTTP 200 vs not 200
+- Service connection map (who talks to whom, and which links are blocked)
 - Details stay collapsed until a row is opened
 - Engineering drill-down: target groups, known-good versions, connectivity, events
 - Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
@@ -432,6 +436,7 @@ Read-only access only:
 - `ecs:ListTasks`
 - `ecs:DescribeTasks`
 - `elasticloadbalancing:DescribeLoadBalancers`
+- `elasticloadbalancing:DescribeListeners`
 - `elasticloadbalancing:DescribeTargetGroups`
 - `elasticloadbalancing:DescribeTargetHealth`
 - `route53:ListHostedZones`

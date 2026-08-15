@@ -174,3 +174,18 @@ export function shortTaskDefinition(arn?: string): string {
   if (!arn) return "—";
   return arn.split("/").pop() ?? arn;
 }
+
+export function serviceLight(item: ServiceResult): "green" | "red" {
+  const http = item.checks?.http_health;
+  if (http) {
+    const expected = (http.expected_status as number | undefined) ?? 200;
+    const code = http.http_status as number | undefined;
+    if (http.status === "PASS" && (code === undefined || code === expected)) {
+      return "green";
+    }
+    return "red";
+  }
+  const running = item.checks?.task_counts?.running as number | undefined;
+  if (item.status === "FAIL" || !running) return "red";
+  return "green";
+}

@@ -11,6 +11,7 @@ import { StatusBadge } from "./components/StatusBadge";
 import { SummaryGrid } from "./components/SummaryGrid";
 import { ExecutiveBrief } from "./components/ExecutiveBrief";
 import { ServiceCard } from "./components/ServiceCard";
+import { ServiceMeshMap } from "./components/ServiceMeshMap";
 
 export default function App() {
   const report = loadReport();
@@ -76,6 +77,9 @@ export default function App() {
 
         <SummaryGrid summary={report.summary} />
         <ExecutiveBrief report={report} onSelect={selectService} />
+        {report.mesh?.nodes?.length ? (
+          <ServiceMeshMap mesh={report.mesh} onSelect={selectService} />
+        ) : null}
 
         {report.results.length === 0 ? (
           <section className="empty">No services were checked.</section>

@@ -47,10 +47,15 @@ from notifications import (
     fingerprint_unhealthy,
     should_notify,
 )
-from topology import build_route53_index, discover_connectivity
+from topology import (
+    build_route53_index,
+    build_service_mesh,
+    collect_peer_hints,
+    discover_connectivity,
+)
 
 
-VERSION = "0.7.1"
+VERSION = "0.7.3"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1320,6 +1325,11 @@ def inspect_service(
                     "expected_status": checks_config.get("http_expected_status", 200),
                 }
 
+        result["peer_hints"] = collect_peer_hints(
+            task_definition,
+            result["checks"].get("connectivity"),
+        )
+
         if checks_config.get("include_stable_task_history", True):
             stable_limit = checks_config.get("stable_task_limit", 3)
             result["checks"]["stable_tasks"] = evaluate_stable_task_history(
@@ -1453,6 +1463,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
             report["results"].append(service_result)
             update_summary(report["summary"], service_result)
 
+    report["mesh"] = build_service_mesh(report["results"])
     return report
 
 
@@ -1685,7 +1696,7 @@ def render_html_report(report: Dict[str, Any]) -> str:
 
 def build_sample_report() -> Dict[str, Any]:
     """Realistic demo data for documentation and examples."""
-    return {
+    report: Dict[str, Any] = {
         "tool": "ecs-service-doctor",
         "version": VERSION,
         "generated_at": "2026-08-07T20:53:00+00:00",
@@ -1817,7 +1828,7 @@ def build_sample_report() -> Dict[str, Any]:
                         "entrypoint": "r53_api_example_com",
                         "nodes": [
                             {"id": "r53_api_example_com", "type": "route53", "label": "api.example.com", "detail": "DNS record"},
-                            {"id": "alb_dev_apps", "type": "alb", "label": "dev-apps-alb", "detail": "APPLICATION · internet-facing"},
+                            {"id": "alb_dev_apps", "type": "alb", "label": "dev-apps-alb", "detail": "APPLICATION · internet-facing · active · HTTPS:443, HTTP:80", "dns_name": "dev-apps-alb-123.us-east-1.elb.amazonaws.com", "vpc_id": "vpc-0123456789abcdef0"},
                             {"id": "tg_tg_orders", "type": "target_group", "label": "tg-orders", "detail": "HTTP · 8080 → orders-api:8080"},
                             {"id": "ecs_orders_api", "type": "ecs_service", "label": "orders-api", "detail": "dev-apps-cluster"},
                             {"id": "rds_orders_db", "type": "rds", "label": "RDS: orders-db", "detail": "inferred backend"},
@@ -1831,6 +1842,37 @@ def build_sample_report() -> Dict[str, Any]:
                             {"from": "ecr_orders_api", "to": "ecs_orders_api", "label": "pulls image"},
                         ],
                         "notes": [],
+                        "load_balancers": [
+                            {
+                                "arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dev-apps-alb/abc",
+                                "type": "alb",
+                                "lb_type": "application",
+                                "name": "dev-apps-alb",
+                                "dns_name": "dev-apps-alb-123.us-east-1.elb.amazonaws.com",
+                                "hosted_zone_id": "Z35SXDOTRQ7X7K",
+                                "scheme": "internet-facing",
+                                "state": "active",
+                                "vpc_id": "vpc-0123456789abcdef0",
+                                "ip_address_type": "ipv4",
+                                "availability_zones": ["us-east-1a", "us-east-1b"],
+                                "subnets": ["subnet-aaa111", "subnet-bbb222"],
+                                "security_groups": ["sg-orders-alb"],
+                                "listeners": [
+                                    {
+                                        "protocol": "HTTPS",
+                                        "port": 443,
+                                        "ssl_policy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+                                        "default_actions": ["forward → tg-orders"],
+                                        "certificates": ["api.example.com"],
+                                    },
+                                    {
+                                        "protocol": "HTTP",
+                                        "port": 80,
+                                        "default_actions": ["redirect → HTTPS:443"],
+                                    },
+                                ],
+                            }
+                        ],
                     },
                 },
             },
@@ -1872,6 +1914,14 @@ def build_sample_report() -> Dict[str, Any]:
                                 "counts": {"healthy": 0, "unhealthy": 0, "initial": 1},
                             }
                         ],
+                    },
+                    "http_health": {
+                        "status": STATUS_PASS,
+                        "message": "HTTP 200 from https://agents.example.com/health (38ms)",
+                        "url": "https://agents.example.com/health",
+                        "http_status": 200,
+                        "expected_status": 200,
+                        "elapsed_ms": 38,
                     },
                     "task_definition": {
                         "status": STATUS_PASS,
@@ -1933,6 +1983,28 @@ def build_sample_report() -> Dict[str, Any]:
                             {"from": "ecr_agents_service", "to": "ecs_agents_service", "label": "pulls image"},
                         ],
                         "notes": [],
+                        "load_balancers": [
+                            {
+                                "arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dev-internal-alb/def",
+                                "type": "alb",
+                                "lb_type": "application",
+                                "name": "dev-internal-alb",
+                                "dns_name": "internal-dev-internal-alb-456.us-east-1.elb.amazonaws.com",
+                                "scheme": "internal",
+                                "state": "active",
+                                "vpc_id": "vpc-0123456789abcdef0",
+                                "ip_address_type": "ipv4",
+                                "availability_zones": ["us-east-1a", "us-east-1b"],
+                                "security_groups": ["sg-internal-alb"],
+                                "listeners": [
+                                    {
+                                        "protocol": "HTTP",
+                                        "port": 80,
+                                        "default_actions": ["forward → tg-agents"],
+                                    }
+                                ],
+                            }
+                        ],
                     },
                 },
             },
@@ -2061,12 +2133,56 @@ def build_sample_report() -> Dict[str, Any]:
                             {"from": "ecr_payments_api", "to": "ecs_payments_api", "label": "pulls image"},
                         ],
                         "notes": [],
+                        "load_balancers": [
+                            {
+                                "arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payments-alb/ghi",
+                                "type": "alb",
+                                "lb_type": "application",
+                                "name": "payments-alb",
+                                "dns_name": "payments-alb-789.us-east-1.elb.amazonaws.com",
+                                "scheme": "internet-facing",
+                                "state": "active",
+                                "vpc_id": "vpc-0123456789abcdef0",
+                                "ip_address_type": "dualstack",
+                                "availability_zones": ["us-east-1a", "us-east-1c"],
+                                "security_groups": ["sg-payments-alb"],
+                                "listeners": [
+                                    {
+                                        "protocol": "HTTPS",
+                                        "port": 443,
+                                        "ssl_policy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+                                        "default_actions": ["forward → tg-payments"],
+                                    }
+                                ],
+                            }
+                        ],
                     },
                 },
             },
             *_sample_healthy_services(),
         ],
     }
+
+    peer_hints = {
+        "orders-api": [
+            "https://payments-api.example.com",
+            "PAYMENTS_URL",
+            "https://search-api.example.com",
+        ],
+        "agents-service": ["https://orders-api.example.com", "ORDERS_API_URL"],
+        "catalog-api": ["https://search-api.example.com", "SEARCH_API_URL"],
+        "search-api": ["https://orders-api.example.com"],
+        "billing-api": ["https://payments-api.example.com", "PAYMENTS_API"],
+        "notifications-worker": [
+            "https://orders-api.example.com",
+            "https://agents-service.example.com",
+        ],
+        "payments-api": ["https://orders-api.example.com"],
+    }
+    for item in report["results"]:
+        item["peer_hints"] = peer_hints.get(item["service"], [])
+    report["mesh"] = build_service_mesh(report["results"])
+    return report
 
 
 def _sample_healthy_services() -> List[Dict[str, Any]]:

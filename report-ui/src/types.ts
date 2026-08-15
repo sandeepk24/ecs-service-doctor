@@ -45,4 +45,31 @@ export interface EcsReport {
     critical_failed?: number;
   };
   results: ServiceResult[];
+  mesh?: ServiceMesh;
+}
+
+export interface MeshNode {
+  id: string;
+  cluster: string;
+  service: string;
+  status: Status;
+  critical?: boolean;
+  light: "green" | "red";
+  http_status?: number;
+  http_url?: string;
+}
+
+export interface MeshEdge {
+  from: string;
+  to: string;
+  from_service: string;
+  to_service: string;
+  via?: string;
+  ok: boolean;
+}
+
+export interface ServiceMesh {
+  summary?: string;
+  nodes: MeshNode[];
+  edges: MeshEdge[];
 }

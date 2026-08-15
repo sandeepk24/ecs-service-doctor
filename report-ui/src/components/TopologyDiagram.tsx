@@ -3,12 +3,40 @@ export interface TopologyNode {
   type: string;
   label: string;
   detail?: string;
+  dns_name?: string;
+  vpc_id?: string;
+  availability_zones?: string[];
 }
 
 export interface TopologyEdge {
   from: string;
   to: string;
   label?: string;
+}
+
+export interface LoadBalancerListener {
+  port?: number;
+  protocol?: string;
+  ssl_policy?: string;
+  default_actions?: string[];
+  certificates?: string[];
+}
+
+export interface LoadBalancerDetail {
+  arn?: string;
+  type?: string;
+  lb_type?: string;
+  name?: string;
+  dns_name?: string;
+  hosted_zone_id?: string;
+  scheme?: string;
+  state?: string;
+  vpc_id?: string;
+  ip_address_type?: string;
+  availability_zones?: string[];
+  subnets?: string[];
+  security_groups?: string[];
+  listeners?: LoadBalancerListener[];
 }
 
 export interface Topology {
@@ -19,6 +47,7 @@ export interface Topology {
   edges: TopologyEdge[];
   notes?: string[];
   mermaid?: string;
+  load_balancers?: LoadBalancerDetail[];
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -53,47 +82,63 @@ const TYPE_CLASS: Record<string, string> = {
   backend: "database",
 };
 
+const TRAFFIC_RANK: Record<string, number> = {
+  internet: 0,
+  route53: 1,
+  alb: 2,
+  nlb: 2,
+  target_group: 3,
+  cloud_map: 3,
+  ecs_service: 4,
+};
+
+const BACKEND_TYPES = new Set(["rds", "redis", "docdb", "dynamodb", "backend"]);
+
 interface Props {
   topology: Topology;
 }
 
-function orderedNodes(topology: Topology): TopologyNode[] {
-  const nodeMap = new Map(topology.nodes.map((node) => [node.id, node]));
-  const seen = new Set<string>();
-  const ordered: TopologyNode[] = [];
-
-  const walk = (nodeId: string) => {
-    if (seen.has(nodeId)) {
-      return;
-    }
-    seen.add(nodeId);
-    const node = nodeMap.get(nodeId);
-    if (!node) {
-      return;
-    }
-    ordered.push(node);
-    for (const edge of topology.edges) {
-      if (edge.from === nodeId) {
-        walk(edge.to);
-      }
-    }
-  };
-
-  if (topology.entrypoint) {
-    walk(topology.entrypoint);
-  }
-
-  for (const node of topology.nodes) {
-    if (!seen.has(node.id)) {
-      ordered.push(node);
-    }
-  }
-
-  return ordered;
+function nodesByType(topology: Topology, types: string[]) {
+  return topology.nodes.filter((node) => types.includes(node.type));
 }
 
-function edgeLabel(topology: Topology, from: string, to: string) {
-  return topology.edges.find((edge) => edge.from === from && edge.to === to)?.label;
+function laneEdges(topology: Topology, nodeIds: Set<string>) {
+  return topology.edges.filter(
+    (edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to)
+  );
+}
+
+function NodeCard({ node }: { node: TopologyNode }) {
+  return (
+    <div className={`topology-node ${TYPE_CLASS[node.type] ?? "backend"}`}>
+      <span className="topology-type">{TYPE_LABELS[node.type] ?? node.type}</span>
+      <strong>{node.label}</strong>
+      {node.detail && <span className="topology-detail">{node.detail}</span>}
+      {node.dns_name && <span className="topology-detail">{node.dns_name}</span>}
+    </div>
+  );
+}
+
+function EdgeList({
+  edges,
+  topology,
+}: {
+  edges: TopologyEdge[];
+  topology: Topology;
+}) {
+  if (!edges.length) return null;
+  const labels = new Map(topology.nodes.map((node) => [node.id, node.label]));
+  return (
+    <ul className="topology-edge-list">
+      {edges.map((edge) => (
+        <li key={`${edge.from}-${edge.to}-${edge.label ?? ""}`}>
+          <strong>{labels.get(edge.from) ?? edge.from}</strong>
+          <span>{edge.label ?? "→"}</span>
+          <strong>{labels.get(edge.to) ?? edge.to}</strong>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function TopologyDiagram({ topology }: Props) {
@@ -101,7 +146,25 @@ export function TopologyDiagram({ topology }: Props) {
     return null;
   }
 
-  const nodes = orderedNodes(topology);
+  const trafficNodes = [...topology.nodes]
+    .filter((node) => node.type in TRAFFIC_RANK)
+    .sort((a, b) => TRAFFIC_RANK[a.type] - TRAFFIC_RANK[b.type]);
+  const backendNodes = nodesByType(topology, [...BACKEND_TYPES]);
+  const imageNodes = nodesByType(topology, ["ecr"]);
+
+  const trafficIds = new Set(trafficNodes.map((node) => node.id));
+  const backendIds = new Set([
+    ...backendNodes.map((node) => node.id),
+    ...topology.nodes.filter((node) => node.type === "ecs_service").map((n) => n.id),
+  ]);
+  const imageIds = new Set([
+    ...imageNodes.map((node) => node.id),
+    ...topology.nodes.filter((node) => node.type === "ecs_service").map((n) => n.id),
+  ]);
+
+  const ranks = [...new Set(trafficNodes.map((node) => TRAFFIC_RANK[node.type]))].sort(
+    (a, b) => a - b
+  );
 
   return (
     <div className="topology">
@@ -110,26 +173,63 @@ export function TopologyDiagram({ topology }: Props) {
         {topology.summary && <span className="topology-summary">{topology.summary}</span>}
       </div>
 
-      <div className="topology-flow">
-        {nodes.map((node, index) => (
-          <div key={node.id} className="topology-step">
-            <div className={`topology-node ${TYPE_CLASS[node.type] ?? "backend"}`}>
-              <span className="topology-type">
-                {TYPE_LABELS[node.type] ?? node.type}
-              </span>
-              <strong>{node.label}</strong>
-              {node.detail && <span className="topology-detail">{node.detail}</span>}
-            </div>
-            {index < nodes.length - 1 && (
-              <div className="topology-arrow">
-                <span>
-                  {edgeLabel(topology, node.id, nodes[index + 1].id) ?? "→"}
-                </span>
+      <div className="topology-lane">
+        <h5>How traffic reaches this service</h5>
+        <div className="topology-columns">
+          {ranks.map((rank, index) => (
+            <div key={rank} className="topology-column-wrap">
+              <div className="topology-column">
+                {trafficNodes
+                  .filter((node) => TRAFFIC_RANK[node.type] === rank)
+                  .map((node) => (
+                    <NodeCard key={node.id} node={node} />
+                  ))}
               </div>
-            )}
-          </div>
-        ))}
+              {index < ranks.length - 1 && (
+                <div className="topology-arrow">
+                  <span>→</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <EdgeList edges={laneEdges(topology, trafficIds)} topology={topology} />
       </div>
+
+      {backendNodes.length > 0 && (
+        <div className="topology-lane">
+          <h5>What this service calls</h5>
+          <div className="topology-flow">
+            {nodesByType(topology, ["ecs_service"]).map((node) => (
+              <NodeCard key={node.id} node={node} />
+            ))}
+            <div className="topology-arrow">
+              <span>connects</span>
+            </div>
+            {backendNodes.map((node) => (
+              <NodeCard key={node.id} node={node} />
+            ))}
+          </div>
+          <EdgeList edges={laneEdges(topology, backendIds)} topology={topology} />
+        </div>
+      )}
+
+      {imageNodes.length > 0 && (
+        <div className="topology-lane">
+          <h5>Container image</h5>
+          <div className="topology-flow">
+            {imageNodes.map((node) => (
+              <NodeCard key={node.id} node={node} />
+            ))}
+            <div className="topology-arrow">
+              <span>pulls image</span>
+            </div>
+            {nodesByType(topology, ["ecs_service"]).map((node) => (
+              <NodeCard key={node.id} node={node} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {topology.notes?.length ? (
         <ul className="topology-notes">

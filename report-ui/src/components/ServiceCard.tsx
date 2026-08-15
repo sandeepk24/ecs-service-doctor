@@ -1,6 +1,8 @@
-import type { ReportCheck, ServiceResult, Topology } from "../types";
+import type { ReportCheck, ServiceResult } from "../types";
+import type { Topology } from "./TopologyDiagram";
 import {
   httpLabel,
+  serviceLight,
   serviceSnapshot,
   shortTaskDefinition,
   statusLabel,
@@ -8,7 +10,9 @@ import {
   trafficLabel,
 } from "../utils";
 import { StatusBadge } from "./StatusBadge";
+import { StatusLight } from "./StatusLight";
 import { TopologyDiagram } from "./TopologyDiagram";
+import { LoadBalancerPanel } from "./LoadBalancerPanel";
 
 interface Props {
   item: ServiceResult;
@@ -175,8 +179,11 @@ export function ServiceCard({ item, expanded, onToggle }: Props) {
     <article className={`service-card ${item.status.toLowerCase()}${expanded ? " open" : ""}`}>
       <button type="button" className="service-row" onClick={onToggle}>
         <div className="service-identity">
-          <h3>{item.service}</h3>
-          {item.critical && <span className="critical-tag">Critical</span>}
+          <StatusLight light={serviceLight(item)} />
+          <div>
+            <h3>{item.service}</h3>
+            {item.critical && <span className="critical-tag">Critical</span>}
+          </div>
         </div>
         <StatusBadge status={item.status} label={statusLabel(item.status)} />
         <div className="service-metric">
@@ -238,6 +245,7 @@ export function ServiceCard({ item, expanded, onToggle }: Props) {
               </div>
 
               <TargetGroupSection targetHealth={checks.target_group_health} />
+              <LoadBalancerPanel loadBalancers={connectivity?.load_balancers} />
               <StableTasksSection stableTasks={checks.stable_tasks} />
 
               {connectivity?.nodes?.length ? (

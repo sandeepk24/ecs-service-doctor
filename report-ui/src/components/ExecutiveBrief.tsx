@@ -3,10 +3,12 @@ import {
   attentionItems,
   executiveHeadline,
   executiveSubhead,
+  serviceLight,
   serviceSnapshot,
   statusLabel,
 } from "../utils";
 import { StatusBadge } from "./StatusBadge";
+import { StatusLight } from "./StatusLight";
 
 interface Props {
   report: EcsReport;
@@ -44,6 +46,7 @@ export function ExecutiveBrief({ report, onSelect }: Props) {
                 className="attention-item"
                 onClick={() => onSelect(serviceKey(item))}
               >
+                <StatusLight light={serviceLight(item)} />
                 <StatusBadge status={item.status} label={statusLabel(item.status)} />
                 <div>
                   <strong>

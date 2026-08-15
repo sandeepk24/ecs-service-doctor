@@ -124,16 +124,97 @@ def discover_load_balancers(
         for load_balancer in lb_response.get("LoadBalancers", []):
             arn = load_balancer["LoadBalancerArn"]
             lb_type = load_balancer.get("Type", "application")
+            zones = [
+                zone.get("ZoneName")
+                for zone in load_balancer.get("AvailabilityZones", [])
+                if zone.get("ZoneName")
+            ]
+            subnets = [
+                zone.get("SubnetId")
+                for zone in load_balancer.get("AvailabilityZones", [])
+                if zone.get("SubnetId")
+            ]
+            listeners = _describe_listeners(elbv2_client, arn)
             load_balancers[arn] = {
                 "arn": arn,
                 "type": NODE_ALB if lb_type == "application" else NODE_NLB,
                 "lb_type": lb_type,
                 "name": load_balancer.get("LoadBalancerName", "load-balancer"),
                 "dns_name": load_balancer.get("DNSName", "").rstrip("."),
+                "hosted_zone_id": load_balancer.get("CanonicalHostedZoneId"),
                 "scheme": load_balancer.get("Scheme", "unknown"),
+                "state": (load_balancer.get("State") or {}).get("Code", "unknown"),
+                "vpc_id": load_balancer.get("VpcId"),
+                "ip_address_type": load_balancer.get("IpAddressType"),
+                "availability_zones": zones,
+                "subnets": subnets,
+                "security_groups": load_balancer.get("SecurityGroups", []),
+                "created_at": str(load_balancer.get("CreatedTime", "")),
+                "listeners": listeners,
             }
 
     return list(load_balancers.values()), target_groups
+
+
+def _describe_listeners(elbv2_client, load_balancer_arn: str) -> List[Dict[str, Any]]:
+    listeners: List[Dict[str, Any]] = []
+    try:
+        paginator = elbv2_client.get_paginator("describe_listeners")
+        for page in paginator.paginate(LoadBalancerArn=load_balancer_arn):
+            for listener in page.get("Listeners", []):
+                actions = []
+                for action in listener.get("DefaultActions", []):
+                    action_type = action.get("Type", "unknown")
+                    target_group_arn = action.get("TargetGroupArn")
+                    if action_type == "forward":
+                        groups = (action.get("ForwardConfig") or {}).get(
+                            "TargetGroups", []
+                        )
+                        if groups:
+                            names = [
+                                group.get("TargetGroupArn", "").rsplit("/", 2)[-2]
+                                if "/" in group.get("TargetGroupArn", "")
+                                else group.get("TargetGroupArn")
+                                for group in groups
+                            ]
+                            actions.append("forward → " + ", ".join(filter(None, names)))
+                        elif target_group_arn:
+                            actions.append(
+                                "forward → " + target_group_arn.rsplit("/", 2)[-2]
+                            )
+                        else:
+                            actions.append("forward")
+                    elif action_type == "redirect":
+                        redirect = action.get("RedirectConfig") or {}
+                        actions.append(
+                            "redirect → "
+                            f"{redirect.get('Protocol', 'HTTPS')}:"
+                            f"{redirect.get('Port', '443')}"
+                        )
+                    elif action_type == "fixed-response":
+                        actions.append(
+                            "fixed-response "
+                            f"{(action.get('FixedResponseConfig') or {}).get('StatusCode', '')}"
+                        )
+                    else:
+                        actions.append(action_type)
+                certificates = [
+                    cert.get("CertificateArn", "").split("/")[-1]
+                    for cert in listener.get("Certificates", [])
+                    if cert.get("CertificateArn")
+                ]
+                listeners.append(
+                    {
+                        "port": listener.get("Port"),
+                        "protocol": listener.get("Protocol"),
+                        "ssl_policy": listener.get("SslPolicy"),
+                        "default_actions": actions,
+                        "certificates": certificates,
+                    }
+                )
+    except Exception:
+        return listeners
+    return listeners
 
 
 def discover_service_registries(sd_client, service: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -290,12 +371,31 @@ def build_topology(
 
     for load_balancer in load_balancers:
         lb_id = _node_id(load_balancer["type"], load_balancer["name"])
+        listener_bits = []
+        for listener in load_balancer.get("listeners") or []:
+            protocol = listener.get("protocol") or "TCP"
+            port = listener.get("port")
+            if port is not None:
+                listener_bits.append(f"{protocol}:{port}")
+        az_bits = load_balancer.get("availability_zones") or []
+        detail_parts = [
+            (load_balancer.get("lb_type") or "application").upper(),
+            load_balancer.get("scheme") or "unknown",
+        ]
+        if load_balancer.get("state"):
+            detail_parts.append(str(load_balancer["state"]))
+        if listener_bits:
+            detail_parts.append(", ".join(listener_bits))
+
         nodes.append(
             {
                 "id": lb_id,
                 "type": load_balancer["type"],
                 "label": load_balancer["name"],
-                "detail": f"{load_balancer['lb_type'].upper()} · {load_balancer['scheme']}",
+                "detail": " · ".join(detail_parts),
+                "dns_name": load_balancer.get("dns_name"),
+                "vpc_id": load_balancer.get("vpc_id"),
+                "availability_zones": az_bits,
             }
         )
 
@@ -444,6 +544,7 @@ def build_topology(
         "edges": edges,
         "notes": notes,
         "http_hosts": http_hosts,
+        "load_balancers": load_balancers,
         "mermaid": build_mermaid(nodes, edges),
     }
 
@@ -481,6 +582,190 @@ def build_mermaid(nodes: List[Dict[str, Any]], edges: List[Dict[str, str]]) -> s
             lines.append(f'  {edge["from"]} --> {edge["to"]}')
 
     return "\n".join(lines)
+
+
+def collect_peer_hints(
+    task_definition: Optional[Dict[str, Any]],
+    connectivity: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Collect strings that may name another ECS service (env, DNS, Cloud Map)."""
+    hints: List[str] = []
+    if connectivity:
+        hints.extend(connectivity.get("http_hosts") or [])
+        for node in connectivity.get("nodes", []):
+            if node.get("type") in {NODE_ROUTE53, NODE_CLOUD_MAP, NODE_ALB, NODE_NLB}:
+                if node.get("label"):
+                    hints.append(str(node["label"]))
+
+    if task_definition:
+        for container in task_definition.get("containerDefinitions", []):
+            for env in container.get("environment", []):
+                if env.get("name"):
+                    hints.append(str(env["name"]))
+                if env.get("value"):
+                    hints.append(str(env["value"]))
+            for secret in container.get("secrets", []):
+                if secret.get("name"):
+                    hints.append(str(secret["name"]))
+
+    return [hint for hint in hints if hint]
+
+
+def service_light(item: Dict[str, Any]) -> str:
+    """Green when the app is up (HTTP 200 / running). Red when not 200 or down."""
+    http = (item.get("checks") or {}).get("http_health") or {}
+    if http:
+        expected = http.get("expected_status", 200)
+        status_code = http.get("http_status")
+        if http.get("status") == "PASS" and (
+            status_code is None or status_code == expected
+        ):
+            return "green"
+        return "red"
+
+    running = ((item.get("checks") or {}).get("task_counts") or {}).get("running", 0)
+    if item.get("status") == "FAIL" or not running:
+        return "red"
+    return "green"
+
+
+def _service_aliases(item: Dict[str, Any]) -> Set[str]:
+    aliases: Set[str] = set()
+    name = item.get("service", "")
+    aliases.add(name.lower())
+    aliases.add(name.lower().replace("_", "-"))
+    aliases.add(re.sub(r"[^a-z0-9]", "", name.lower()))
+
+    connectivity = (item.get("checks") or {}).get("connectivity") or {}
+    for host in connectivity.get("http_hosts") or []:
+        lowered = str(host).lower().rstrip(".")
+        aliases.add(lowered)
+        aliases.add(lowered.split(".")[0])
+
+    for node in connectivity.get("nodes") or []:
+        if node.get("type") in {NODE_ROUTE53, NODE_CLOUD_MAP}:
+            label = str(node.get("label") or "").lower().rstrip(".")
+            if label:
+                aliases.add(label)
+                aliases.add(label.split(".")[0])
+
+    return {alias for alias in aliases if len(alias) >= 4}
+
+
+def _hint_matches_alias(hint: str, alias: str) -> bool:
+    lowered = hint.lower()
+    alias = alias.lower()
+    compact_alias = re.sub(r"[^a-z0-9]", "", alias)
+    if len(compact_alias) < 4:
+        return False
+
+    if "." in alias:
+        hosts = re.findall(r"(?:https?://)?([a-z0-9.-]+\.[a-z0-9.-]+)", lowered)
+        return any(
+            host == alias or host.startswith(f"{alias}.") for host in hosts
+        )
+
+    tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
+    if alias in tokens or compact_alias in tokens:
+        return True
+    if f"{alias}." in lowered or f"//{alias}" in lowered:
+        return True
+    compact_hint = "".join(tokens)
+    return len(compact_alias) >= 6 and compact_alias in compact_hint
+
+
+def build_service_mesh(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Cluster-level map of services, status lights, and who talks to whom."""
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    seen_edges: Set[Tuple[str, str]] = set()
+
+    for item in results:
+        http = (item.get("checks") or {}).get("http_health") or {}
+        node_id = f"{item.get('cluster')}::{item.get('service')}"
+        light = service_light(item)
+        nodes.append(
+            {
+                "id": node_id,
+                "cluster": item.get("cluster"),
+                "service": item.get("service"),
+                "status": item.get("status"),
+                "critical": item.get("critical", False),
+                "light": light,
+                "http_status": http.get("http_status"),
+                "http_url": http.get("url"),
+            }
+        )
+
+    aliases_by_id = {
+        f"{item.get('cluster')}::{item.get('service')}": _service_aliases(item)
+        for item in results
+    }
+
+    for source in results:
+        source_id = f"{source.get('cluster')}::{source.get('service')}"
+        hints = [str(hint) for hint in source.get("peer_hints") or []]
+        connectivity = (source.get("checks") or {}).get("connectivity") or {}
+        for node in connectivity.get("nodes") or []:
+            if node.get("type") == NODE_CLOUD_MAP and node.get("label"):
+                hints.append(str(node["label"]))
+
+        for target in results:
+            target_id = f"{target.get('cluster')}::{target.get('service')}"
+            if source_id == target_id:
+                continue
+            if (source_id, target_id) in seen_edges:
+                continue
+            if source.get("cluster") != target.get("cluster"):
+                continue
+
+            matched_alias = next(
+                (
+                    alias
+                    for alias in aliases_by_id.get(target_id, set())
+                    for hint in hints
+                    if _hint_matches_alias(hint, alias)
+                    and alias not in aliases_by_id.get(source_id, set())
+                ),
+                None,
+            )
+            if not matched_alias:
+                continue
+
+            seen_edges.add((source_id, target_id))
+            target_light = service_light(target)
+            source_light = service_light(source)
+            edges.append(
+                {
+                    "from": source_id,
+                    "to": target_id,
+                    "from_service": source.get("service"),
+                    "to_service": target.get("service"),
+                    "via": "DNS / env / Service Connect",
+                    "ok": source_light == "green" and target_light == "green",
+                }
+            )
+
+    green = sum(1 for node in nodes if node["light"] == "green")
+    red = len(nodes) - green
+    blocked = sum(1 for edge in edges if not edge["ok"])
+    if not nodes:
+        summary = "No services to map"
+    elif not edges:
+        summary = f"{green} up · {red} down · no service-to-service links detected"
+    elif blocked:
+        summary = (
+            f"{green} up · {red} down · {len(edges)} connections "
+            f"({blocked} blocked because a service is not HTTP 200)"
+        )
+    else:
+        summary = f"{green} up · {red} down · {len(edges)} connections reachable"
+
+    return {
+        "summary": summary,
+        "nodes": nodes,
+        "edges": edges,
+    }
 
 
 def discover_connectivity(

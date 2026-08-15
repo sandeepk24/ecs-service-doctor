@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, rollout state, target group attachment, load balancer health, recent ECS events, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, HTTP 200, recent ECS events, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
 
 ---
 
@@ -18,6 +18,7 @@ That stack is powerful, but **application health is harder to see than ECS task 
 - The load balancer routes traffic to tasks that fail HTTP health checks
 - A rolling deploy leaves two active revisions and half your traffic on a bad build
 - Target groups are misconfigured (wrong container port, no registered targets)
+- Tasks are up but CPU or memory is saturating and the app is about to fail
 
 ecs-service-doctor answers the question operators and on-call engineers actually care about: **can real traffic reach this app, and is the running task the one we intended to deploy?**
 
@@ -27,26 +28,37 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (v0.7.0):
+Everything this repo provides today (**v0.7.7**):
 
 ### Application health checks
 
 - **Task counts** — running vs desired vs pending; optional expected desired count per service
-- **CPU and memory** — reserved task size plus CloudWatch utilization; warns at 80% and fails at 90%
+- **CPU and memory** — reserved Fargate/EC2 size plus CloudWatch utilization (last 15 minutes); warns at 80%, fails at 90%
 - **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
-- **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
-- **Container image** — image URI/tag from the live task definition (what is actually deployed)
 - **HTTP endpoint check** — optional/auto URL must return **HTTP 200** (configurable); fails the service when not 200
 - **Green / red status lights** — green when the app is up (HTTP 200), red when it is not 200
-- **Service-to-service map** — shows which services call each other and whether the destination is reachable
+- **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
+- **Container image** — image URI/tag from the live task definition (what is actually deployed)
 - **Pass / warn / fail** — per-check and per-service status with plain-language summaries
+
+### HTML Service Health Report
+
+Shareable, self-contained HTML (no external assets after export):
+
+- **Executive snapshot** — one sentence plus compact fleet counts in the header
+- **Needs attention** — only the services that are not healthy, with a jump-to-service link
+- **Cluster tabs** — **Services**, **Target groups**, and **Load balancers** (not repeated on every service)
+- **Service picker** — green/red lights, then a short detail panel: capacity, CPU, memory, release, traffic, app, known-good versions, events
+- **Target groups tab** — every group in the cluster once, with service, port, and healthy/unhealthy counts
+- **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
+- Sample: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### Continuous monitoring and alerts
 
 - **`--interval 10m`** — re-check on a schedule until you stop the process (also `30s`, `1h`)
 - **Slack webhook** — `--notify-slack` or config `notifications.slack_webhook_url`
 - **Generic webhook** — `--notify-webhook` for any JSON endpoint (PagerDuty, custom bots, etc.)
-- **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email/SMS/Lambda fans-out
+- **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email/SMS/Lambda fan-out
 - **Alert fingerprinting** — same failure is not re-notified on every interval tick until the issue changes or clears
 - **Notify on FAIL by default**; add `--notify-on-warn` to include warnings
 
@@ -55,6 +67,7 @@ Everything this repo provides today (v0.7.0):
 - **Target group detection** — finds target groups attached to the ECS service
 - **Attachment validation** — target group exists, is attached to ALB/NLB, ECS container name/port matches the task definition
 - **Target health** — healthy, unhealthy, and registering target counts
+- **ALB / NLB details** — DNS, scheme, VPC, AZs, listeners, SSL policy
 - **Classic ELB notice** — warns when a service uses a classic load balancer (ALB/NLB required for full TG checks)
 
 ### Stable tasks and rollback
@@ -66,15 +79,13 @@ Everything this repo provides today (v0.7.0):
 
 ### Connectivity auto-detection
 
-Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
+Used in the CLI/JSON summary (Route 53, ALB/NLB, target groups, inferred backends):
 
 - **Route 53** — DNS records pointing at the load balancer
 - **ALB / NLB** — load balancer name, scheme (public/internal)
-- **Target groups** — shown between load balancer and ECS in the diagram
 - **Cloud Map / Service Connect** — service registry attachments
 - **Inferred backends** — RDS, DynamoDB, ElastiCache, DocumentDB, and other AWS endpoints parsed from container env vars and secrets
 - **ECR** — container image source
-- **Internet** — entry point for internet-facing load balancers
 
 ### CLI and configuration
 
@@ -94,15 +105,6 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 | **`--verbose`** | Full technical detail including rollback commands and event lists |
 | **`--json`** | Machine-readable report for CI/CD pipelines and automation |
 | **`--html`** | Self-contained **ECS Service Health Report** (React, no external assets after export) |
-
-### HTML Service Health Report
-
-- Executive snapshot in one sentence, plus counts for healthy / attention / unhealthy
-- Cluster tabs for Services, Target groups, and Load balancers
-- Service picker with green / red lights for HTTP 200 vs not 200
-- Target groups and load balancers listed once per cluster, not repeated on every service
-- Service details stay short: health checks, CPU, memory, known-good versions, events
-- Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### CI/CD and safety
 
@@ -238,7 +240,7 @@ Application and infrastructure signals together:
 | Area | What you learn |
 |------|----------------|
 | **Tasks** | Running vs desired count — is the app scaled correctly? |
-| **CPU / Memory** | Reserved task size and last-15-minute CloudWatch utilization |
+| **CPU / Memory** | Reserved task size (vCPU / GiB) and last-15-minute CloudWatch utilization; warn at 80%, fail at 90% |
 | **Deployments** | Rollout finished or stuck with multiple active revisions |
 | **Load balancers** | Target groups detected, attached to ALB/NLB, container port matches task definition |
 | **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
@@ -284,6 +286,8 @@ Results are deduplicated by revision, sorted by most recently stable, and limite
   Tasks: 2/2 running
   Deployment: finished
   Load balancer: Target groups attached correctly: healthy=2, unhealthy=0
+  CPU: 18% average · reserved 0.5 vCPU
+  Memory: 41% average · reserved 1 GiB
   Stable task: orders-api:42 (current) — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
   Stable task: orders-api:41 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.2
   Stable task: orders-api:40 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.1
@@ -326,7 +330,18 @@ In an advanced config file you can tune stable task history:
 
 Set `include_stable_task_history` to `false` to skip this check. Increase `stable_task_limit` if you want more than 3 rollback candidates (default: `3`).
 
-### CPU and memory (optional)
+---
+
+## CPU and memory
+
+Each service reports **reserved** CPU/memory from the task definition and **utilization** from CloudWatch (`AWS/ECS` `CPUUtilization` and `MemoryUtilization`, last 15 minutes).
+
+| Signal | Default |
+|--------|---------|
+| Warn | ≥ 80% |
+| Fail | ≥ 90% |
+
+If CloudWatch has no datapoints yet, reserved size still shows and the service is not failed for missing metrics.
 
 ```json
 {
@@ -340,7 +355,7 @@ Set `include_stable_task_history` to `false` to skip this check. Increase `stabl
 }
 ```
 
-Utilization comes from CloudWatch `AWS/ECS` `CPUUtilization` and `MemoryUtilization` over the last 15 minutes. Set `include_cpu_memory` to `false` to skip this check.
+Set `include_cpu_memory` to `false` to skip this check. Requires `cloudwatch:GetMetricData`.
 
 ---
 
@@ -386,6 +401,8 @@ Account: 123456789012
   Deployment: finished
   Load balancer: Target groups attached correctly: healthy=2, unhealthy=0
   Target groups: 1 target group(s): tg-orders — attachments look correct
+  CPU: 18% average · reserved 0.5 vCPU
+  Memory: 41% average · reserved 1 GiB
   Stable task: orders-api:42 (current) — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
   Stable task: orders-api:41 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.2
   Image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.3
@@ -395,6 +412,8 @@ Account: 123456789012
   Tasks: 1/2 running — Running count is below desired count: running=1, desired=2
   Deployment: Primary deployment rollout state is IN_PROGRESS
   Load balancer: 1 unhealthy target(s) registered
+  CPU: 64% average · reserved 1 vCPU
+  Memory: 93% average · reserved 2 GiB
   Stable task: payments-api:16 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v2.0.0
   Stable task: payments-api:15 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v1.9.9
   Latest event: (service payments-api) has started 1 tasks...
@@ -423,11 +442,11 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 
 The HTML report is built for **leadership scan, then drill-down**:
 
-- One-sentence executive snapshot (healthy vs needs attention)
+- One-sentence executive snapshot (healthy vs needs attention) and compact fleet counts
 - Attention list of only the services that are not healthy
-- Cluster tabs for Services, Target groups, and Load balancers
-- Green / red lights for HTTP 200 vs not 200
-- Engineering drill-down: CPU, memory, known-good versions, events, plus cluster-wide TG and ALB/NLB views
+- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**
+- Service details: capacity, CPU, memory, release, traffic, HTTP 200, known-good versions, events
+- Target groups and load balancers listed once per cluster (not copied onto every service)
 
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
 

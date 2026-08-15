@@ -148,6 +148,12 @@ export function LoadBalancerPanel({ loadBalancers }: Props) {
                         <strong>
                           {listener.protocol}:{listener.port}
                         </strong>
+                        {!!listener.host_header_rules?.length && (
+                          <span>
+                            {listener.host_header_rules.length} listener rule
+                            {listener.host_header_rules.length === 1 ? "" : "s"}
+                          </span>
+                        )}
                         <span>
                           {(listener.default_actions ?? []).join(" · ") ||
                             "no default action"}
@@ -159,7 +165,10 @@ export function LoadBalancerPanel({ loadBalancers }: Props) {
                           <ul className="host-rules">
                             {listener.host_header_rules.map((rule, ruleIndex) => (
                               <li key={`${rule.priority ?? "rule"}-${ruleIndex}`}>
-                                Host {(rule.hosts ?? []).join(", ")}
+                                Rule {rule.priority ?? ruleIndex + 1}
+                                {rule.hosts?.length
+                                  ? ` · Host ${(rule.hosts ?? []).join(", ")}`
+                                  : ""}
                                 {rule.action ? ` · ${rule.action}` : ""}
                               </li>
                             ))}

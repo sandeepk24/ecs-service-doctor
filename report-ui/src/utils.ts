@@ -141,13 +141,13 @@ export function serviceSnapshot(item: ServiceResult): string {
   if (http?.status === "FAIL") {
     const code = http.http_status as number | undefined;
     return typeof code === "number"
-      ? `App is not returning HTTP 200 (got ${code})`
+      ? `App health check failed (got HTTP ${code})`
       : "App health endpoint is not reachable";
   }
 
   const hostRoutes = checks.host_header_health;
   if (hostRoutes?.status === "FAIL") {
-    return hostRoutes.message ?? "A host-header route is not returning HTTP 200";
+    return hostRoutes.message ?? "An endpoint health check failed";
   }
 
   const tasks = checks.task_counts;

@@ -15,7 +15,7 @@ Checks:
 - task definition image
 - load balancer target group health
 - recent stable task definitions for rollback
-- HTTP endpoint health (expect 200) and notifications
+- HTTP endpoint health using ALB target-group path/matcher (and notifications)
 - Slack, Microsoft Teams, webhook, and SNS alerts
 - continuous monitoring with --interval
 
@@ -27,6 +27,7 @@ Usage:
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -37,7 +38,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 import boto3
@@ -56,7 +57,7 @@ from topology import (
 )
 
 
-VERSION = "0.7.9"
+VERSION = "0.8.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -939,10 +940,110 @@ def parse_interval(value: str) -> int:
     return seconds
 
 
+def parse_http_success_codes(matcher: Any) -> Set[int]:
+    if isinstance(matcher, dict):
+        matcher = matcher.get("HttpCode") or matcher.get("http_code")
+    text = str(matcher or "200").replace(" ", "")
+    codes: Set[int] = set()
+    for part in text.split(","):
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                start, end = part.split("-", 1)
+                codes.update(range(int(start), int(end) + 1))
+            else:
+                codes.add(int(part))
+        except ValueError:
+            continue
+    return codes or {200}
+
+
+def format_success_codes(codes: Set[int]) -> str:
+    if not codes:
+        return "200"
+    ordered = sorted(codes)
+    if ordered == list(range(ordered[0], ordered[-1] + 1)) and len(ordered) > 1:
+        return f"{ordered[0]}-{ordered[-1]}"
+    return ",".join(str(code) for code in ordered[:12])
+
+
+def http_probe_settings(
+    service_config: Dict[str, Any],
+    checks_config: Dict[str, Any],
+    target_health: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Prefer ALB target-group health check path/matcher when config is not explicit."""
+    groups = (target_health or {}).get("target_groups") or []
+    target_group = None
+    for group in groups:
+        protocol = str(group.get("health_check_protocol") or "").upper()
+        if protocol in {"HTTP", "HTTPS"} or group.get("health_check_path"):
+            target_group = group
+            break
+    if target_group is None and groups:
+        target_group = groups[0]
+
+    explicit_path = service_config.get("health_check_path") or checks_config.get(
+        "http_health_path"
+    )
+    path = explicit_path or (target_group or {}).get("health_check_path") or "/health"
+    if not str(path).startswith("/"):
+        path = f"/{path}"
+
+    scheme = service_config.get("health_check_scheme") or checks_config.get(
+        "http_health_scheme"
+    )
+    if not scheme and target_group:
+        protocol = str(target_group.get("health_check_protocol") or "").upper()
+        if protocol == "HTTPS":
+            scheme = "https"
+        elif protocol == "HTTP":
+            scheme = "http"
+    scheme = scheme or "https"
+
+    explicit_status = service_config.get("expected_http_status")
+    if explicit_status is None:
+        explicit_status = checks_config.get("http_expected_status")
+    if explicit_status is not None:
+        accepted = {int(explicit_status)}
+        matcher_label = str(int(explicit_status))
+        source = "config"
+    elif target_group and target_group.get("health_check_matcher"):
+        accepted = parse_http_success_codes(target_group.get("health_check_matcher"))
+        matcher_label = str(target_group.get("health_check_matcher"))
+        source = f"target group {target_group.get('name')}"
+    else:
+        accepted = {200}
+        matcher_label = "200"
+        source = "default"
+
+    timeout = float(checks_config.get("http_timeout_seconds", 5))
+    tg_timeout = (target_group or {}).get("health_check_timeout")
+    if tg_timeout:
+        try:
+            timeout = max(float(tg_timeout), 1.0)
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "path": path,
+        "scheme": scheme,
+        "accepted_statuses": accepted,
+        "expected_status": min(accepted) if accepted else 200,
+        "matcher_label": matcher_label,
+        "timeout_seconds": timeout,
+        "method": str(checks_config.get("http_method", "GET")),
+        "source": source,
+        "target_group": (target_group or {}).get("name"),
+    }
+
+
 def resolve_http_health_url(
     service_config: Dict[str, Any],
     checks_config: Dict[str, Any],
     connectivity: Optional[Dict[str, Any]] = None,
+    target_health: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     explicit = (
         service_config.get("health_check_url")
@@ -952,24 +1053,21 @@ def resolve_http_health_url(
     if explicit:
         return str(explicit)
 
-    path = service_config.get("health_check_path") or checks_config.get(
-        "http_health_path", "/health"
-    )
-    if not path.startswith("/"):
-        path = f"/{path}"
-
-    scheme = service_config.get("health_check_scheme") or checks_config.get(
-        "http_health_scheme", "https"
-    )
+    settings = http_probe_settings(service_config, checks_config, target_health)
+    path = settings["path"]
+    scheme = settings["scheme"]
 
     hosts: List[str] = []
     if connectivity:
         hosts.extend(connectivity.get("http_hosts") or [])
+        for record in connectivity.get("dns_records") or []:
+            if record.get("name"):
+                hosts.append(record["name"])
         for node in connectivity.get("nodes", []):
             if node.get("type") == "route53" and node.get("label"):
                 hosts.append(node["label"])
 
-    host = next((item for item in hosts if item), None)
+    host = next((item for item in hosts if item and "*" not in str(item)), None)
     if not host:
         return None
 
@@ -980,16 +1078,20 @@ def check_http_health(
     url: str,
     *,
     expected_status: int = 200,
+    accepted_statuses: Optional[Set[int]] = None,
     timeout_seconds: float = 5.0,
     method: str = "GET",
 ) -> Dict[str, Any]:
     parsed = urlparse(url)
+    accepted = set(accepted_statuses) if accepted_statuses else {expected_status}
+    expected_label = format_success_codes(accepted)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return {
             "status": STATUS_FAIL,
             "message": f"Invalid health check URL: {url}",
             "url": url,
             "expected_status": expected_status,
+            "accepted_statuses": sorted(accepted),
         }
 
     request = urllib.request.Request(
@@ -1002,26 +1104,22 @@ def check_http_health(
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             status_code = int(getattr(response, "status", 200))
-            # Drain a small amount so connections close cleanly.
             response.read(1024)
     except urllib.error.HTTPError as exc:
         status_code = int(exc.code)
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        if status_code == expected_status:
-            return {
-                "status": STATUS_PASS,
-                "message": f"HTTP {status_code} from {url} ({elapsed_ms}ms)",
-                "url": url,
-                "http_status": status_code,
-                "expected_status": expected_status,
-                "elapsed_ms": elapsed_ms,
-            }
+        ok = status_code in accepted
         return {
-            "status": STATUS_FAIL,
-            "message": f"HTTP {status_code} from {url} (expected {expected_status})",
+            "status": STATUS_PASS if ok else STATUS_FAIL,
+            "message": (
+                f"HTTP {status_code} from {url} ({elapsed_ms}ms)"
+                if ok
+                else f"HTTP {status_code} from {url} (expected {expected_label})"
+            ),
             "url": url,
             "http_status": status_code,
             "expected_status": expected_status,
+            "accepted_statuses": sorted(accepted),
             "elapsed_ms": elapsed_ms,
         }
     except Exception as exc:  # noqa: BLE001
@@ -1031,26 +1129,23 @@ def check_http_health(
             "message": f"HTTP check failed for {url}: {exc}",
             "url": url,
             "expected_status": expected_status,
+            "accepted_statuses": sorted(accepted),
             "elapsed_ms": elapsed_ms,
         }
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    if status_code == expected_status:
-        return {
-            "status": STATUS_PASS,
-            "message": f"HTTP {status_code} from {url} ({elapsed_ms}ms)",
-            "url": url,
-            "http_status": status_code,
-            "expected_status": expected_status,
-            "elapsed_ms": elapsed_ms,
-        }
-
+    ok = status_code in accepted
     return {
-        "status": STATUS_FAIL,
-        "message": f"HTTP {status_code} from {url} (expected {expected_status})",
+        "status": STATUS_PASS if ok else STATUS_FAIL,
+        "message": (
+            f"HTTP {status_code} from {url} ({elapsed_ms}ms)"
+            if ok
+            else f"HTTP {status_code} from {url} (expected {expected_label})"
+        ),
         "url": url,
         "http_status": status_code,
         "expected_status": expected_status,
+        "accepted_statuses": sorted(accepted),
         "elapsed_ms": elapsed_ms,
     }
 
@@ -1089,6 +1184,7 @@ def collect_host_header_routes(
                         ),
                         "load_balancer": load_balancer.get("name"),
                         "target_groups": rule.get("target_groups") or [],
+                        "priority": rule.get("priority"),
                         "wildcard": "*" in str(host),
                     }
                     existing = by_host.get(host)
@@ -1099,61 +1195,174 @@ def collect_host_header_routes(
     return routes
 
 
+def _normalize_host(host: str) -> str:
+    return str(host).rstrip(".").lower()
+
+
+def _host_matches_pattern(name: str, pattern: str) -> bool:
+    name = _normalize_host(name)
+    pattern = _normalize_host(pattern)
+    if "*" in pattern:
+        return fnmatch.fnmatch(name, pattern)
+    return name == pattern
+
+
+def collect_route53_names(connectivity: Optional[Dict[str, Any]]) -> List[str]:
+    names: List[str] = []
+    seen: Set[str] = set()
+
+    def add(name: Optional[str]) -> None:
+        if not name or "*" in str(name):
+            return
+        key = _normalize_host(name)
+        if key in seen:
+            return
+        seen.add(key)
+        names.append(str(name).rstrip("."))
+
+    for record in (connectivity or {}).get("dns_records") or []:
+        add(record.get("name"))
+    for load_balancer in (connectivity or {}).get("load_balancers") or []:
+        for record in load_balancer.get("dns_records") or []:
+            add(record.get("name"))
+    for node in (connectivity or {}).get("nodes") or []:
+        if node.get("type") == "route53":
+            add(node.get("label"))
+    return names
+
+
+def collect_endpoint_hosts(
+    connectivity: Optional[Dict[str, Any]],
+    target_health: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Host-header routes plus Route 53 names that belong to this service."""
+    routes = collect_host_header_routes(connectivity, target_health)
+    dns_names = collect_route53_names(connectivity)
+    endpoints: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+
+    def add(host: str, scheme: str, source: str, **extra: Any) -> None:
+        key = _normalize_host(host)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        endpoints.append(
+            {
+                "host": str(host).rstrip("."),
+                "scheme": scheme,
+                "source": source,
+                "wildcard": "*" in str(host),
+                **extra,
+            }
+        )
+
+    for route in routes:
+        add(
+            route["host"],
+            route["scheme"],
+            "host-header",
+            listener=route.get("listener"),
+            load_balancer=route.get("load_balancer"),
+            priority=route.get("priority"),
+        )
+
+    patterns = [route["host"] for route in routes]
+    for name in dns_names:
+        matched = next(
+            (
+                route
+                for route in routes
+                if _host_matches_pattern(name, route["host"])
+            ),
+            None,
+        )
+        if patterns and matched is None:
+            continue
+        extra = {}
+        if matched:
+            extra = {
+                "listener": matched.get("listener"),
+                "load_balancer": matched.get("load_balancer"),
+                "priority": matched.get("priority"),
+            }
+        add(name, "https", "route53", **extra)
+
+    return endpoints
+
+
+def target_groups_support_http_probe(target_health: Optional[Dict[str, Any]]) -> bool:
+    groups = (target_health or {}).get("target_groups") or []
+    if not groups:
+        return True
+    for group in groups:
+        protocol = str(
+            group.get("health_check_protocol") or group.get("protocol") or ""
+        ).upper()
+        if protocol in {"HTTP", "HTTPS"} or group.get("health_check_path"):
+            return True
+    return False
+
+
 def evaluate_host_header_health(
     connectivity: Optional[Dict[str, Any]],
     target_health: Optional[Dict[str, Any]],
     service_config: Dict[str, Any],
     checks_config: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    routes = collect_host_header_routes(connectivity, target_health)
-    if not routes:
+    endpoints = collect_endpoint_hosts(connectivity, target_health)
+    if not endpoints:
         return None
 
-    path = service_config.get("health_check_path") or checks_config.get(
-        "http_health_path", "/health"
-    )
-    if not path.startswith("/"):
-        path = f"/{path}"
-    expected_status = int(
-        service_config.get("expected_http_status")
-        or checks_config.get("http_expected_status", 200)
-    )
-    timeout_seconds = float(checks_config.get("http_timeout_seconds", 5))
-    method = str(checks_config.get("http_method", "GET"))
+    settings = http_probe_settings(service_config, checks_config, target_health)
+    if not target_groups_support_http_probe(target_health) and not (
+        service_config.get("health_check_url") or checks_config.get("health_check_url")
+    ):
+        return None
+
+    path = settings["path"]
+    method = settings["method"]
+    probe_note = f"{method} {path} matcher {settings['matcher_label']}"
+    if settings.get("target_group"):
+        probe_note += f" (target group {settings['target_group']})"
 
     host_results: List[Dict[str, Any]] = []
-    probes = []
-    for route in routes:
-        if route["wildcard"]:
+    probes: List[Tuple[Dict[str, Any], str]] = []
+    for endpoint in endpoints:
+        if endpoint["wildcard"]:
             host_results.append(
                 {
-                    "host": route["host"],
+                    "host": endpoint["host"],
                     "status": STATUS_WARN,
                     "message": (
-                        f"Wildcard host header {route['host']} cannot be probed"
+                        f"Wildcard host {endpoint['host']} cannot be probed"
                     ),
                     "wildcard": True,
-                    "listener": route["listener"],
-                    "load_balancer": route["load_balancer"],
+                    "source": endpoint.get("source"),
+                    "listener": endpoint.get("listener"),
+                    "load_balancer": endpoint.get("load_balancer"),
+                    "priority": endpoint.get("priority"),
                 }
             )
             continue
-        url = f"{route['scheme']}://{route['host']}{path}"
-        probes.append((route, url))
+        url = f"{endpoint['scheme']}://{endpoint['host']}{path}"
+        probes.append((endpoint, url))
 
     def _probe(item: Tuple[Dict[str, Any], str]) -> Dict[str, Any]:
-        route, url = item
+        endpoint, url = item
         result = check_http_health(
             url,
-            expected_status=expected_status,
-            timeout_seconds=timeout_seconds,
+            expected_status=settings["expected_status"],
+            accepted_statuses=settings["accepted_statuses"],
+            timeout_seconds=settings["timeout_seconds"],
             method=method,
         )
         return {
             **result,
-            "host": route["host"],
-            "listener": route["listener"],
-            "load_balancer": route["load_balancer"],
+            "host": endpoint["host"],
+            "listener": endpoint.get("listener"),
+            "load_balancer": endpoint.get("load_balancer"),
+            "source": endpoint.get("source"),
+            "priority": endpoint.get("priority"),
             "wildcard": False,
         }
 
@@ -1169,23 +1378,42 @@ def evaluate_host_header_health(
         for item in host_results
         if item.get("status") == STATUS_PASS and not item.get("wildcard")
     ]
+    rule_labels: List[str] = []
+    for item in host_results:
+        priority = item.get("priority")
+        if priority is None or str(priority) == "":
+            continue
+        label = f"#{priority}"
+        if label not in rule_labels:
+            rule_labels.append(label)
+    rules_note = f"listener rules {', '.join(rule_labels)}" if rule_labels else ""
     if failed:
         status = STATUS_FAIL
         hosts = ", ".join(item["host"] for item in failed)
-        message = f"{len(failed)} host-header route(s) failed: {hosts}"
+        message = f"{len(failed)} endpoint(s) failed: {hosts}"
+        if rules_note:
+            message += f" · {rules_note}"
+        message += f" · {probe_note}"
     elif probed_ok:
         status = STATUS_PASS
-        message = f"{len(probed_ok)} host-header route(s) healthy"
+        message = f"{len(probed_ok)} endpoint(s) healthy"
+        if rules_note:
+            message += f" · {rules_note}"
+        message += f" · {probe_note}"
         if warned:
             message += f" · {len(warned)} wildcard(s) skipped"
     else:
         status = STATUS_WARN
-        message = "Host-header routes were found but none could be probed"
+        message = f"Endpoints were found but none could be probed · {probe_note}"
 
     return {
         "status": status,
         "message": message,
         "hosts": host_results,
+        "path": path,
+        "matcher": settings["matcher_label"],
+        "probe_source": settings["source"],
+        "listener_rules": rule_labels,
     }
 
 
@@ -1338,6 +1566,12 @@ def _validate_target_group_attachment(
             "target_type": target_group.get("TargetType"),
             "vpc_id": target_group.get("VpcId"),
             "health_check_path": target_group.get("HealthCheckPath"),
+            "health_check_protocol": target_group.get("HealthCheckProtocol"),
+            "health_check_port": target_group.get("HealthCheckPort"),
+            "health_check_enabled": target_group.get("HealthCheckEnabled", True),
+            "health_check_interval": target_group.get("HealthCheckIntervalSeconds"),
+            "health_check_timeout": target_group.get("HealthCheckTimeoutSeconds"),
+            "health_check_matcher": (target_group.get("Matcher") or {}).get("HttpCode"),
             "load_balancer_arns": load_balancer_arns,
             "load_balancer_count": len(load_balancer_arns),
             "registered_targets": registered_total,
@@ -1670,30 +1904,42 @@ def inspect_service(
 
         if checks_config.get("include_http_health", True):
             connectivity = result["checks"].get("connectivity")
+            target_health = result["checks"].get("target_group_health")
+            settings = http_probe_settings(
+                service_config, checks_config, target_health
+            )
             health_url = resolve_http_health_url(
                 service_config,
                 checks_config,
                 connectivity,
+                target_health,
             )
-            if health_url:
-                result["checks"]["http_health"] = check_http_health(
+            explicit_url = (
+                service_config.get("health_check_url")
+                or service_config.get("url")
+                or checks_config.get("health_check_url")
+            )
+            can_probe = bool(explicit_url) or target_groups_support_http_probe(
+                target_health
+            )
+            if health_url and can_probe:
+                http_result = check_http_health(
                     health_url,
-                    expected_status=int(
-                        service_config.get("expected_http_status")
-                        or checks_config.get("http_expected_status", 200)
-                    ),
-                    timeout_seconds=float(
-                        checks_config.get("http_timeout_seconds", 5)
-                    ),
-                    method=str(checks_config.get("http_method", "GET")),
+                    expected_status=settings["expected_status"],
+                    accepted_statuses=settings["accepted_statuses"],
+                    timeout_seconds=settings["timeout_seconds"],
+                    method=settings["method"],
                 )
-            elif service_config.get("health_check_url") or checks_config.get(
-                "require_http_health"
-            ):
+                http_result["probe_source"] = settings["source"]
+                http_result["matcher"] = settings["matcher_label"]
+                http_result["path"] = settings["path"]
+                result["checks"]["http_health"] = http_result
+            elif explicit_url or checks_config.get("require_http_health"):
                 result["checks"]["http_health"] = {
                     "status": STATUS_FAIL,
                     "message": "HTTP health check enabled but no URL could be resolved",
-                    "expected_status": checks_config.get("http_expected_status", 200),
+                    "expected_status": settings["expected_status"],
+                    "matcher": settings["matcher_label"],
                 }
 
         if checks_config.get("include_host_header_health", True):
@@ -2702,17 +2948,19 @@ def build_sample_report() -> Dict[str, Any]:
             for listener in load_balancer.get("listeners") or []:
                 listener["host_header_rules"] = [
                     {
-                        "priority": "10",
-                        "hosts": hosts,
+                        "priority": str(10 + index * 10),
+                        "hosts": [host],
                         "target_groups": [tg_name],
                         "target_group_arns": [],
                         "action": f"forward → {tg_name}",
                     }
+                    for index, host in enumerate(hosts)
                 ]
         failed = item["service"] == "payments-api"
         host_results = []
-        for host in hosts:
+        for index, host in enumerate(hosts):
             url = f"https://{host}/health"
+            priority = str(10 + index * 10)
             if failed:
                 host_results.append(
                     {
@@ -2723,6 +2971,8 @@ def build_sample_report() -> Dict[str, Any]:
                         "http_status": 503,
                         "expected_status": 200,
                         "wildcard": False,
+                        "source": "host-header",
+                        "priority": priority,
                     }
                 )
             else:
@@ -2736,16 +2986,25 @@ def build_sample_report() -> Dict[str, Any]:
                         "expected_status": 200,
                         "elapsed_ms": 28,
                         "wildcard": False,
+                        "source": "host-header",
+                        "priority": priority,
                     }
                 )
+        rule_labels = [f"#{10 + index * 10}" for index in range(len(hosts))]
+        probe_note = f"GET /health matcher 200 (target group {tg_name})"
+        rules_note = f"listener rules {', '.join(rule_labels)}"
         item["checks"]["host_header_health"] = {
             "status": STATUS_FAIL if failed else STATUS_PASS,
             "message": (
-                f"{len(hosts)} host-header route(s) failed: {', '.join(hosts)}"
+                f"{len(hosts)} endpoint(s) failed: {', '.join(hosts)} · {rules_note} · {probe_note}"
                 if failed
-                else f"{len(hosts)} host-header route(s) healthy"
+                else f"{len(hosts)} endpoint(s) healthy · {rules_note} · {probe_note}"
             ),
             "hosts": host_results,
+            "path": "/health",
+            "matcher": "200",
+            "probe_source": f"target group {tg_name}",
+            "listener_rules": rule_labels,
         }
 
     peer_hints = {
@@ -2767,6 +3026,18 @@ def build_sample_report() -> Dict[str, Any]:
     for item in report["results"]:
         item["peer_hints"] = peer_hints.get(item["service"], [])
     report["mesh"] = build_service_mesh(report["results"])
+    for item in report["results"]:
+        for group in (
+            item.get("checks", {}).get("target_group_health", {}).get("target_groups")
+            or []
+        ):
+            group.setdefault("health_check_path", "/health")
+            group.setdefault("health_check_protocol", "HTTP")
+            group.setdefault("health_check_port", "traffic-port")
+            group.setdefault("health_check_enabled", True)
+            group.setdefault("health_check_interval", 30)
+            group.setdefault("health_check_timeout", 5)
+            group.setdefault("health_check_matcher", "200")
     return report
 
 
@@ -3107,14 +3378,14 @@ With a config file:
     parser.add_argument(
         "--health-url",
         metavar="URL",
-        help="HTTP health check URL that must return 200 (or --expected-http-status)",
+        help="HTTP health check URL (overrides target-group path and host detection)",
     )
 
     parser.add_argument(
         "--health-path",
         metavar="PATH",
         default=None,
-        help="Health path appended to auto-detected host (default: /health)",
+        help="Health path (default: ALB target-group HealthCheckPath, else /health)",
     )
 
     parser.add_argument(
@@ -3122,7 +3393,7 @@ With a config file:
         type=int,
         default=None,
         metavar="CODE",
-        help="Expected HTTP status code (default: 200)",
+        help="Override expected HTTP status (default: ALB Matcher.HttpCode, else 200)",
     )
 
     parser.add_argument(

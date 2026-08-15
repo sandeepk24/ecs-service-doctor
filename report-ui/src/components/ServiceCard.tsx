@@ -129,7 +129,7 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
           message={checks.http_health?.message}
         />
         <CheckRow
-          label="Host routes"
+          label="Endpoints"
           status={checks.host_header_health?.status}
           message={checks.host_header_health?.message}
         />

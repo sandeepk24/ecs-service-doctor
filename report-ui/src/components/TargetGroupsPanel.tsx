@@ -12,6 +12,11 @@ export interface TargetGroupCheck {
   protocol?: string;
   registered_targets?: number;
   counts?: Record<string, number>;
+  health_check_path?: string;
+  health_check_protocol?: string;
+  health_check_matcher?: string;
+  health_check_interval?: number;
+  health_check_timeout?: number;
 }
 
 export interface ClusterTargetGroup extends TargetGroupCheck {
@@ -103,6 +108,15 @@ export function TargetGroupsPanel({ groups }: Props) {
                   </span>
                 )}
                 {healthBits.length > 0 && <span>{healthBits.join(" · ")}</span>}
+                {group.health_check_path && (
+                  <span>
+                    {(group.health_check_protocol || "HTTP").toUpperCase()}{" "}
+                    {group.health_check_path}
+                    {group.health_check_matcher
+                      ? ` · matcher ${group.health_check_matcher}`
+                      : ""}
+                  </span>
+                )}
               </div>
               {group.attachment_issues?.length ? (
                 <ul className="target-group-issues">

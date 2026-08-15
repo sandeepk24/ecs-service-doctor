@@ -60,7 +60,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2763,6 +2763,10 @@ def build_sample_report() -> Dict[str, Any]:
                         "status": STATUS_PASS,
                         "events": [
                             {
+                                "created_at": "2026-08-07T19:54:00+00:00",
+                                "message": "(service agents-service) has started 1 tasks.",
+                            },
+                            {
                                 "created_at": "2026-08-07T19:55:00+00:00",
                                 "message": "(service agents-service) registered 1 targets in target-group tg-agents",
                             }
@@ -2894,6 +2898,10 @@ def build_sample_report() -> Dict[str, Any]:
                     "recent_events": {
                         "status": STATUS_PASS,
                         "events": [
+                            {
+                                "created_at": "2026-08-07T19:48:00+00:00",
+                                "message": "(service payments-api) has started 1 tasks.",
+                            },
                             {
                                 "created_at": "2026-08-07T19:52:00+00:00",
                                 "message": "(service payments-api) was unable to place a task. Reason: ResourceInitializationError.",

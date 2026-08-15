@@ -1,6 +1,7 @@
 import type { ReportCheck, ServiceResult } from "../types";
 import {
   formatTimestamp,
+  restartedWithinHours,
   serviceMetrics,
   statusLabel,
   toneFromStatus,
@@ -26,15 +27,18 @@ function Metric({
 
 export function ServiceOpsCard({
   item,
+  generatedAt,
   active,
   onSelect,
 }: {
   item: ServiceResult;
+  generatedAt: string;
   active: boolean;
   onSelect: () => void;
 }) {
   const metrics = serviceMetrics(item);
   const tone = toneFromStatus(item.status);
+  const restartedAt = restartedWithinHours(item, generatedAt, 12);
   const tasks =
     metrics.running != null && metrics.desired != null
       ? `${metrics.running}/${metrics.desired}`
@@ -58,6 +62,11 @@ export function ServiceOpsCard({
       <p>
         {[metrics.env, item.launch_type].filter(Boolean).join(" · ") || item.cluster}
       </p>
+      {restartedAt && (
+        <span className="restart-chip" title={`Restarted ${formatTimestamp(restartedAt)}`}>
+          Restarted · 12h
+        </span>
+      )}
       <div className="ops-metric-grid">
         <Metric label="Tasks" value={tasks} />
         <Metric

@@ -1676,19 +1676,12 @@ body {
   gap: 0.85rem;
 }
 
-.ops-mark {
+.ops-ecs-logo {
   width: 48px;
   height: 48px;
   margin-top: 0.35rem;
-  border-radius: 50%;
   flex-shrink: 0;
-  background:
-    radial-gradient(circle at 32% 28%, #ffffff 0 14%, transparent 16%),
-    radial-gradient(circle at 35% 32%, #b7f4ff 0 38%, #3cc2e0 62%, #167a90 100%);
-  box-shadow:
-    inset 0 3px 0 rgba(255, 255, 255, 0.65),
-    0 0 16px rgba(60, 194, 224, 0.55),
-    0 8px 16px rgba(0, 0, 0, 0.35);
+  filter: drop-shadow(0 0 10px rgba(255, 152, 0, 0.45));
 }
 
 .ops-subhead {
@@ -1883,23 +1876,24 @@ body {
 }
 
 .ops-service-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
-  justify-items: center;
-  gap: 1.1rem 0.85rem;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
   margin-bottom: 1rem;
 }
 
 .ops-service-card {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  width: min(100%, 198px);
-  min-height: 198px;
-  padding: 1rem 0.8rem 0.85rem;
-  border-radius: 24px;
+  width: auto;
+  min-height: 168px;
+  padding: 0.65rem 0.45rem 0.55rem;
+  border-radius: 20px;
   border: 1px solid rgba(60, 194, 224, 0.28);
   border-top-width: 4px;
   color: #ffffff;
@@ -1960,8 +1954,22 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
   line-height: 1.15;
-  font-size: 0.92rem;
+  font-size: 0.78rem;
   color: #ffffff;
+}
+
+.restart-chip {
+  display: inline-flex;
+  margin: 0 0 0.35rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #07202c;
+  background: linear-gradient(180deg, #fff3c4 0%, #ffb703 100%);
+  box-shadow: 0 0 10px rgba(255, 183, 3, 0.35);
 }
 
 .ops-service-card .status-badge {
@@ -2081,7 +2089,7 @@ body {
   }
 
   .ops-service-grid {
-    grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+    flex-wrap: nowrap;
   }
 
   .logs-panel {

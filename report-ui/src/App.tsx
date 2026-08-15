@@ -27,7 +27,7 @@ import {
   collectClusterDnsRecords,
   Route53Panel,
 } from "./components/Route53Panel";
-import { LogsPanel } from "./components/LogsPanel";
+import { EcsLogo } from "./components/EcsLogo";
 
 type ClusterSection =
   | "services"
@@ -83,7 +83,7 @@ export default function App() {
       <main className="shell">
         <header className="ops-header hero">
           <div className="ops-brand">
-            <span className="ops-mark" aria-hidden="true" />
+            <EcsLogo className="ops-ecs-logo" />
             <div>
               <p className="eyebrow">Amazon ECS</p>
               <h1>Service Health</h1>
@@ -183,6 +183,7 @@ export default function App() {
                           <ServiceOpsCard
                             key={key}
                             item={item}
+                            generatedAt={report.generated_at}
                             active={selected && serviceKey(selected) === key}
                             onSelect={() => setSelectedKey(key)}
                           />

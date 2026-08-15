@@ -252,6 +252,34 @@ function usableTimestamp(value?: string): string | undefined {
   return Number.isNaN(time) ? undefined : value;
 }
 
+export function restartedWithinHours(
+  item: ServiceResult,
+  nowIso: string,
+  hours = 12,
+): string | undefined {
+  const now = Date.parse(nowIso);
+  if (Number.isNaN(now)) return undefined;
+  const cutoff = now - hours * 60 * 60 * 1000;
+  const events =
+    (item.checks?.recent_events?.events as
+      | Array<{ created_at?: string; message?: string }>
+      | undefined) ?? [];
+  for (const event of events) {
+    if (
+      !/has started \d+ tasks|started \d+ tasks for deployment/i.test(
+        event.message ?? "",
+      )
+    ) {
+      continue;
+    }
+    const stamp = usableTimestamp(event.created_at);
+    if (!stamp) continue;
+    const time = Date.parse(stamp);
+    if (!Number.isNaN(time) && time >= cutoff && time <= now) return stamp;
+  }
+  return undefined;
+}
+
 export function lastDeploymentAt(item: ServiceResult): string | undefined {
   const deployments =
     (item.checks?.deployments?.deployments as

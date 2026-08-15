@@ -1,7 +1,7 @@
 import type { ReportCheck, ServiceResult } from "../types";
 import {
   formatTimestamp,
-  restartedWithinHours,
+  restartSummary,
   serviceMetrics,
   statusLabel,
   toneFromStatus,
@@ -38,7 +38,7 @@ export function ServiceOpsCard({
 }) {
   const metrics = serviceMetrics(item);
   const tone = toneFromStatus(item.status);
-  const restartedAt = restartedWithinHours(item, generatedAt, 12);
+  const restart = restartSummary(item, generatedAt, 12);
   const tasks =
     metrics.running != null && metrics.desired != null
       ? `${metrics.running}/${metrics.desired}`
@@ -62,9 +62,18 @@ export function ServiceOpsCard({
       <p>
         {[metrics.env, item.launch_type].filter(Boolean).join(" · ") || item.cluster}
       </p>
-      {restartedAt && (
-        <span className="restart-chip" title={`Restarted ${formatTimestamp(restartedAt)}`}>
-          Restarted · 12h
+      {restart && (
+        <span
+          className="restart-chip"
+          title={
+            restart.reasons.length
+              ? restart.reasons.join(" · ")
+              : restart.lastAt
+                ? `Last start ${formatTimestamp(restart.lastAt)}`
+                : "Restarted in the last 12 hours"
+          }
+        >
+          Restarted {restart.count}×
         </span>
       )}
       <div className="ops-metric-grid">

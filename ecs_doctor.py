@@ -60,7 +60,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1940,7 +1940,7 @@ def inspect_service(
         )
 
         if checks_config.get("include_recent_events", True):
-            limit = checks_config.get("recent_event_limit", 8)
+            limit = checks_config.get("recent_event_limit", 40)
             result["checks"]["recent_events"] = {
                 "status": STATUS_PASS,
                 "events": extract_recent_events(service, limit),
@@ -2763,13 +2763,21 @@ def build_sample_report() -> Dict[str, Any]:
                         "status": STATUS_PASS,
                         "events": [
                             {
+                                "created_at": "2026-08-07T19:55:00+00:00",
+                                "message": "(service agents-service) registered 1 targets in target-group tg-agents",
+                            },
+                            {
                                 "created_at": "2026-08-07T19:54:00+00:00",
                                 "message": "(service agents-service) has started 1 tasks.",
                             },
                             {
-                                "created_at": "2026-08-07T19:55:00+00:00",
-                                "message": "(service agents-service) registered 1 targets in target-group tg-agents",
-                            }
+                                "created_at": "2026-08-07T19:53:00+00:00",
+                                "message": "(service agents-service) has begun a new deployment.",
+                            },
+                            {
+                                "created_at": "2026-08-07T12:20:00+00:00",
+                                "message": "(service agents-service) has started 1 tasks.",
+                            },
                         ],
                     },
                     "stable_tasks": {
@@ -2899,16 +2907,24 @@ def build_sample_report() -> Dict[str, Any]:
                         "status": STATUS_PASS,
                         "events": [
                             {
-                                "created_at": "2026-08-07T19:48:00+00:00",
-                                "message": "(service payments-api) has started 1 tasks.",
-                            },
-                            {
                                 "created_at": "2026-08-07T19:52:00+00:00",
                                 "message": "(service payments-api) was unable to place a task. Reason: ResourceInitializationError.",
                             },
                             {
                                 "created_at": "2026-08-07T19:50:00+00:00",
                                 "message": "(service payments-api) (task abc123) (port 8080) is unhealthy in target-group tg-payments due to Health checks failed.",
+                            },
+                            {
+                                "created_at": "2026-08-07T19:48:00+00:00",
+                                "message": "(service payments-api) has started 1 tasks.",
+                            },
+                            {
+                                "created_at": "2026-08-07T14:12:00+00:00",
+                                "message": "(service payments-api) has started 1 tasks.",
+                            },
+                            {
+                                "created_at": "2026-08-07T10:05:00+00:00",
+                                "message": "(service payments-api) has started 1 tasks.",
                             },
                         ],
                     },

@@ -252,11 +252,44 @@ function usableTimestamp(value?: string): string | undefined {
   return Number.isNaN(time) ? undefined : value;
 }
 
-export function restartedWithinHours(
+export interface RestartSummary {
+  count: number;
+  lastAt?: string;
+  reasons: string[];
+}
+
+const START_EVENT_RE =
+  /has started (\d+) tasks|started (\d+) tasks for deployment/i;
+
+function restartReason(message: string): string | undefined {
+  const reason = message.match(/Reason:\s*([^.]+)/i);
+  if (reason?.[1]) return reason[1].trim();
+  if (/health checks failed/i.test(message)) {
+    return "Target group health checks failed";
+  }
+  if (/essential container .+ exited/i.test(message)) {
+    return "Essential container exited";
+  }
+  if (/cannotpullcontainererror|failed to pull/i.test(message)) {
+    return "Failed to pull container image";
+  }
+  if (/outofmemory|out of memory/i.test(message)) {
+    return "Out of memory";
+  }
+  if (/has begun a new deployment|force.?new.?deployment/i.test(message)) {
+    return "New deployment started tasks";
+  }
+  if (/unable to place a task/i.test(message)) {
+    return "Unable to place a task";
+  }
+  return undefined;
+}
+
+export function restartSummary(
   item: ServiceResult,
   nowIso: string,
   hours = 12,
-): string | undefined {
+): RestartSummary | undefined {
   const now = Date.parse(nowIso);
   if (Number.isNaN(now)) return undefined;
   const cutoff = now - hours * 60 * 60 * 1000;
@@ -264,20 +297,42 @@ export function restartedWithinHours(
     (item.checks?.recent_events?.events as
       | Array<{ created_at?: string; message?: string }>
       | undefined) ?? [];
+
+  let count = 0;
+  let lastAt: string | undefined;
+  const reasons: string[] = [];
+  const seen = new Set<string>();
+
   for (const event of events) {
-    if (
-      !/has started \d+ tasks|started \d+ tasks for deployment/i.test(
-        event.message ?? "",
-      )
-    ) {
-      continue;
-    }
     const stamp = usableTimestamp(event.created_at);
     if (!stamp) continue;
     const time = Date.parse(stamp);
-    if (!Number.isNaN(time) && time >= cutoff && time <= now) return stamp;
+    if (Number.isNaN(time) || time < cutoff || time > now) continue;
+
+    const message = event.message ?? "";
+    const started = message.match(START_EVENT_RE);
+    if (started) {
+      const n = Number(started[1] || started[2] || 1);
+      count += Number.isFinite(n) && n > 0 ? n : 1;
+      if (!lastAt || stamp > lastAt) lastAt = stamp;
+    }
+    const reason = restartReason(message);
+    if (reason && !seen.has(reason)) {
+      seen.add(reason);
+      reasons.push(reason);
+    }
   }
-  return undefined;
+
+  if (count === 0) return undefined;
+  return { count, lastAt, reasons };
+}
+
+export function restartedWithinHours(
+  item: ServiceResult,
+  nowIso: string,
+  hours = 12,
+): string | undefined {
+  return restartSummary(item, nowIso, hours)?.lastAt;
 }
 
 export function lastDeploymentAt(item: ServiceResult): string | undefined {

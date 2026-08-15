@@ -483,6 +483,48 @@ body {
   overflow-wrap: anywhere;
 }
 
+.restart-banner {
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 183, 3, 0.4);
+  background: rgba(255, 183, 3, 0.12);
+}
+
+.restart-banner strong {
+  display: block;
+  color: #ffb703;
+  font-size: 0.86rem;
+}
+
+.restart-banner p {
+  margin: 0.3rem 0 0;
+  color: var(--ice);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.restart-event-list {
+  list-style: none;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.restart-event-list li {
+  display: grid;
+  grid-template-columns: minmax(8rem, 10rem) minmax(0, 1fr);
+  gap: 0.5rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.restart-event-list span {
+  overflow-wrap: anywhere;
+  color: var(--ice);
+}
+
 .log-lines {
   list-style: none;
   margin: 0;

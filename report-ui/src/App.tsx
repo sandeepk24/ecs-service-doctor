@@ -233,6 +233,7 @@ export default function App() {
                   <LogsPanel
                     services={ordered}
                     selected={selected}
+                    generatedAt={report.generated_at}
                     onSelect={(item) => setSelectedKey(serviceKey(item))}
                   />
                 )}

@@ -67,9 +67,6 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="bg-glow bg-glow-a" />
-      <div className="bg-glow bg-glow-b" />
-
       <main className="shell">
         <header className="hero">
           <div className="hero-top">

@@ -12,6 +12,7 @@ Checks:
 - rollout state
 - multiple active deployments
 - recent ECS service events
+- CloudWatch application logs
 - task definition image
 - load balancer target group health
 - recent stable task definitions for rollback
@@ -59,7 +60,7 @@ from topology import (
 )
 
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -532,6 +533,117 @@ def evaluate_cpu_memory(
         "message": f"CPU {cpu['message']} · Memory {memory['message']}",
         "cpu": cpu,
         "memory": memory,
+        "lookback_minutes": lookback_minutes,
+    }
+
+
+def awslogs_targets(task_definition: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    targets: List[Dict[str, str]] = []
+    if not task_definition:
+        return targets
+    for container in task_definition.get("containerDefinitions") or []:
+        log_cfg = container.get("logConfiguration") or {}
+        if (log_cfg.get("logDriver") or "").lower() != "awslogs":
+            continue
+        options = log_cfg.get("options") or {}
+        group = options.get("awslogs-group")
+        if not group:
+            continue
+        prefix = options.get("awslogs-stream-prefix") or ""
+        container_name = container.get("name") or "container"
+        stream_prefix = f"{prefix}/{container_name}" if prefix else container_name
+        targets.append(
+            {
+                "container": container_name,
+                "log_group": group,
+                "stream_prefix": stream_prefix,
+            }
+        )
+    return targets
+
+
+def evaluate_service_logs(
+    task_definition: Optional[Dict[str, Any]],
+    logs_client=None,
+    lookback_minutes: int = 30,
+    limit: int = 40,
+) -> Dict[str, Any]:
+    targets = awslogs_targets(task_definition)
+    groups = list(dict.fromkeys(target["log_group"] for target in targets))
+    if not targets:
+        return {
+            "status": STATUS_PASS,
+            "message": "No awslogs configuration on the task definition",
+            "log_groups": [],
+            "events": [],
+            "lookback_minutes": lookback_minutes,
+        }
+
+    if logs_client is None:
+        return {
+            "status": STATUS_PASS,
+            "message": f"Log group(s): {', '.join(groups)}",
+            "log_groups": groups,
+            "events": [],
+            "lookback_minutes": lookback_minutes,
+        }
+
+    start_ms = int(
+        (datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)).timestamp()
+        * 1000
+    )
+    collected: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    per_target = max(10, limit // max(len(targets), 1))
+
+    for target in targets:
+        try:
+            response = logs_client.filter_log_events(
+                logGroupName=target["log_group"],
+                logStreamNamePrefix=target["stream_prefix"],
+                startTime=start_ms,
+                limit=per_target,
+                interleaved=True,
+            )
+        except ClientError as exc:
+            errors.append(f"{target['log_group']}: {exc}")
+            continue
+        for event in response.get("events") or []:
+            ts = event.get("timestamp")
+            stamp = (
+                datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+                if isinstance(ts, (int, float))
+                else None
+            )
+            collected.append(
+                {
+                    "timestamp": stamp,
+                    "stream": event.get("logStreamName"),
+                    "container": target["container"],
+                    "message": event.get("message") or "",
+                }
+            )
+
+    collected.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    collected = collected[:limit]
+    if errors and not collected:
+        return {
+            "status": STATUS_WARN,
+            "message": "; ".join(errors[:3]),
+            "log_groups": groups,
+            "events": [],
+            "errors": errors[:8],
+            "lookback_minutes": lookback_minutes,
+        }
+    message = f"{len(collected)} log line(s) from {', '.join(groups)}"
+    if errors:
+        message += f" · {len(errors)} stream error(s)"
+    return {
+        "status": STATUS_PASS,
+        "message": message,
+        "log_groups": groups,
+        "events": collected,
+        "errors": errors[:8],
         "lookback_minutes": lookback_minutes,
     }
 
@@ -1784,6 +1896,7 @@ def inspect_service(
     max_workers: int = DEFAULT_MAX_WORKERS,
     route53_index: Optional[Dict[str, List[Any]]] = None,
     cloudwatch_client=None,
+    logs_client=None,
 ) -> Dict[str, Any]:
     service_name = service_config["name"]
     expected_desired_count = service_config.get("expected_desired_count")
@@ -1840,7 +1953,7 @@ def inspect_service(
             "include_connectivity_diagram", True
         ) or checks_config.get("include_target_group_health", True) or checks_config.get(
             "include_cpu_memory", True
-        ):
+        ) or checks_config.get("include_logs", True):
             task_definition = describe_task_definition(
                 ecs_client, service["taskDefinition"]
             )
@@ -1881,6 +1994,14 @@ def inspect_service(
                 memory_warn_percent=float(checks_config.get("memory_warn_percent", 80)),
                 memory_fail_percent=float(checks_config.get("memory_fail_percent", 90)),
                 lookback_minutes=lookback_minutes,
+            )
+
+        if checks_config.get("include_logs", True):
+            result["checks"]["logs"] = evaluate_service_logs(
+                task_definition,
+                logs_client,
+                lookback_minutes=int(checks_config.get("log_lookback_minutes", 30)),
+                limit=int(checks_config.get("log_line_limit", 40)),
             )
 
         if checks_config.get("include_target_group_health", True):
@@ -1974,7 +2095,7 @@ def inspect_service(
             {
                 key: value
                 for key, value in result["checks"].items()
-                if key not in {"connectivity", "stable_tasks"}
+                if key not in {"connectivity", "stable_tasks", "logs"}
             }
         )
 
@@ -2009,6 +2130,11 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
     cloudwatch_client = (
         session.client("cloudwatch")
         if checks_config.get("include_cpu_memory", True)
+        else None
+    )
+    logs_client = (
+        session.client("logs")
+        if checks_config.get("include_logs", True)
         else None
     )
     max_workers = aws_config.get("max_workers", DEFAULT_MAX_WORKERS)
@@ -2089,6 +2215,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
                 max_workers,
                 route53_index,
                 cloudwatch_client,
+                logs_client,
             )
             for cluster_name, service_config, prefetched_service, prefetch_error in work_items
         ]
@@ -2324,6 +2451,10 @@ def print_human_report(report: Dict[str, Any]) -> None:
         ]
         if dns_names:
             print(f"  Route 53        : {', '.join(dict.fromkeys(dns_names))}")
+
+        logs = checks.get("logs")
+        if logs:
+            print(f"  Logs            : [{logs['status']}] {logs['message']}")
 
         resources = checks.get("resources")
         if resources:
@@ -2933,6 +3064,67 @@ def build_sample_report() -> Dict[str, Any]:
                         "updated_at": "2026-08-07T19:58:00+00:00",
                     }
                 ]
+
+        name = item["service"]
+        log_group = f"/ecs/{name}"
+        if name == "payments-api":
+            log_events = [
+                {
+                    "timestamp": "2026-08-07T19:52:04+00:00",
+                    "stream": "ecs/payments-api/abc123",
+                    "container": "payments-api",
+                    "message": "ERROR ResourceInitializationError: failed to pull secrets from SSM",
+                },
+                {
+                    "timestamp": "2026-08-07T19:51:41+00:00",
+                    "stream": "ecs/payments-api/abc123",
+                    "container": "payments-api",
+                    "message": "WARN health check /health returned 503",
+                },
+                {
+                    "timestamp": "2026-08-07T19:50:12+00:00",
+                    "stream": "ecs/payments-api/abc123",
+                    "container": "payments-api",
+                    "message": "INFO starting payments-api :17 on :8080",
+                },
+            ]
+        elif name == "agents-service":
+            log_events = [
+                {
+                    "timestamp": "2026-08-07T19:55:08+00:00",
+                    "stream": "ecs/agents-service/def456",
+                    "container": "agents-service",
+                    "message": "INFO registering with target group tg-agents",
+                },
+                {
+                    "timestamp": "2026-08-07T19:54:22+00:00",
+                    "stream": "ecs/agents-service/def456",
+                    "container": "agents-service",
+                    "message": "INFO starting agents-service :8",
+                },
+            ]
+        else:
+            log_events = [
+                {
+                    "timestamp": "2026-08-07T19:58:11+00:00",
+                    "stream": f"ecs/{name}/task-42",
+                    "container": name,
+                    "message": f"INFO {name} listening on :8080",
+                },
+                {
+                    "timestamp": "2026-08-07T19:57:40+00:00",
+                    "stream": f"ecs/{name}/task-42",
+                    "container": name,
+                    "message": "INFO GET /health 200 4ms",
+                },
+            ]
+        item["checks"]["logs"] = {
+            "status": STATUS_PASS,
+            "message": f"{len(log_events)} log line(s) from {log_group}",
+            "log_groups": [log_group],
+            "events": log_events,
+            "lookback_minutes": 30,
+        }
 
     dns_by_lb = {
         "dev-apps-alb": [

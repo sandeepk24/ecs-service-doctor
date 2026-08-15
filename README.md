@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
 
 ---
 
@@ -377,6 +377,8 @@ If CloudWatch has no datapoints yet, reserved size still shows and the service i
 
 Set `include_cpu_memory` to `false` to skip this check. Requires `cloudwatch:GetMetricData`.
 
+The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group (`logs:FilterLogEvents`). Set `include_logs` to `false` to skip.
+
 ---
 
 ## Config file (optional)
@@ -493,6 +495,7 @@ Read-only access only:
 - `ecs:ListTasks`
 - `ecs:DescribeTasks`
 - `cloudwatch:GetMetricData`
+- `logs:FilterLogEvents`
 - `elasticloadbalancing:DescribeLoadBalancers`
 - `elasticloadbalancing:DescribeListeners`
 - `elasticloadbalancing:DescribeRules`

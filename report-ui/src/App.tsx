@@ -27,12 +27,14 @@ import {
   collectClusterDnsRecords,
   Route53Panel,
 } from "./components/Route53Panel";
+import { LogsPanel } from "./components/LogsPanel";
 
 type ClusterSection =
   | "services"
   | "target-groups"
   | "load-balancers"
-  | "route-53";
+  | "route-53"
+  | "logs";
 
 function serviceKey(item: ServiceResult) {
   return `${item.cluster}::${item.service}`;
@@ -76,18 +78,23 @@ export default function App() {
 
   return (
     <div className="page">
+      <div className="bg-glow bg-glow-a" />
+      <div className="bg-glow bg-glow-b" />
       <main className="shell">
         <header className="ops-header hero">
-          <div>
-            <p className="eyebrow">Amazon ECS</p>
-            <h1>Service Health</h1>
-            <p className="ops-subhead">
-              {operational}
-              <span> · Last checked {formatTimestamp(report.generated_at)}</span>
-            </p>
+          <div className="ops-brand">
+            <span className="ops-mark" aria-hidden="true" />
+            <div>
+              <p className="eyebrow">Amazon ECS</p>
+              <h1>Service Health</h1>
+              <p className="ops-subhead">
+                {operational}
+                <span> · Last checked {formatTimestamp(report.generated_at)}</span>
+              </p>
+            </div>
           </div>
           <div className="ops-header-side">
-            <span className="ops-env">
+            <span className="ops-env gloss-pill">
               {environment ? `${environment} · ` : ""}
               {report.region}
             </span>
@@ -145,6 +152,7 @@ export default function App() {
                       ["target-groups", "Target groups", targetGroups.length],
                       ["load-balancers", "Load balancers", loadBalancers.length],
                       ["route-53", "Route 53", dnsRecords.length],
+                      ["logs", "Logs", services.length],
                     ] as const
                   ).map(([id, label, count]) => (
                     <button
@@ -218,6 +226,14 @@ export default function App() {
 
                 {section === "route-53" && (
                   <Route53Panel records={dnsRecords} scan={report.route53} />
+                )}
+
+                {section === "logs" && (
+                  <LogsPanel
+                    services={ordered}
+                    selected={selected}
+                    onSelect={(item) => setSelectedKey(serviceKey(item))}
+                  />
                 )}
               </section>
             );

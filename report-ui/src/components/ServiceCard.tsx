@@ -70,27 +70,7 @@ export function ServiceOpsCard({
               : undefined
           }
         />
-        <Metric
-          label="CPU"
-          value={metrics.cpuUtil != null ? `${Math.round(metrics.cpuUtil)}%` : "—"}
-          tone={toneFromStatus(metrics.cpuStatus)}
-        />
-        <Metric
-          label="Memory"
-          value={metrics.memUtil != null ? `${Math.round(metrics.memUtil)}%` : "—"}
-          tone={toneFromStatus(metrics.memStatus)}
-        />
       </div>
-      <footer>
-        <span>
-          {metrics.deployStatus
-            ? statusLabel(metrics.deployStatus)
-            : "Deploy —"}
-        </span>
-        <span className="mono" title={metrics.revision}>
-          {metrics.revision}
-        </span>
-      </footer>
     </button>
   );
 }

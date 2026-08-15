@@ -1,21 +1,20 @@
 import { useMemo, useState } from "react";
 import {
-  executiveHeadline,
-  executiveSubhead,
   formatTimestamp,
   groupByCluster,
   loadReport,
   overallStatus,
+  reportEnvironment,
   sortBySeverity,
   statusLabel,
-  serviceLight,
-  serviceSnapshot,
+  serviceMetrics,
+  toneFromStatus,
 } from "./utils";
 import type { ServiceResult } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
-import { StatusLight } from "./components/StatusLight";
 import { ExecutiveBrief } from "./components/ExecutiveBrief";
-import { ServiceDetail } from "./components/ServiceCard";
+import { HealthBar, KpiStrip } from "./components/KpiStrip";
+import { ServiceDetail, ServiceOpsCard } from "./components/ServiceCard";
 import {
   collectClusterLoadBalancers,
   LoadBalancerPanel,
@@ -43,9 +42,17 @@ export default function App() {
   const report = loadReport();
   const clusters = groupByCluster(report.results);
   const overall = overallStatus(report);
+  const overallTone = toneFromStatus(overall);
+  const environment = reportEnvironment(report);
   const defaultKey = useMemo(() => {
-    const issue = sortBySeverity(report.results).find((item) => item.status !== "PASS");
-    return issue ? serviceKey(issue) : report.results[0] ? serviceKey(report.results[0]) : "";
+    const issue = sortBySeverity(report.results).find(
+      (item) => item.status !== "PASS",
+    );
+    return issue
+      ? serviceKey(issue)
+      : report.results[0]
+        ? serviceKey(report.results[0])
+        : "";
   }, [report.results]);
 
   const [selectedKey, setSelectedKey] = useState(defaultKey);
@@ -65,45 +72,42 @@ export default function App() {
     });
   };
 
+  const operational = `${report.summary.passed}/${report.summary.total_services} services operational`;
+
   return (
     <div className="page">
       <main className="shell">
-        <header className="hero">
-          <div className="hero-top">
-            <div>
-              <p className="eyebrow">Amazon ECS</p>
-              <h1>Service Health Report</h1>
-              <p className="hero-headline">{executiveHeadline(report)}</p>
-            </div>
-            <StatusBadge status={overall} large label={statusLabel(overall)} />
+        <header className="ops-header hero">
+          <div>
+            <p className="eyebrow">Amazon ECS</p>
+            <h1>Service Health</h1>
+            <p className="ops-subhead">
+              {operational}
+              <span> · Last checked {formatTimestamp(report.generated_at)}</span>
+            </p>
           </div>
-
-          <div className="hero-meta compact">
-            <div className="meta-chip">
-              <span className="meta-label">Fleet</span>
-              <span>{executiveSubhead(report)}</span>
-            </div>
-            <div className="meta-chip">
-              <span className="meta-label">Generated</span>
-              <span>{formatTimestamp(report.generated_at)}</span>
-            </div>
-            <div className="meta-chip">
-              <span className="meta-label">Region</span>
-              <span className="mono">{report.region}</span>
-            </div>
-            <div className="meta-chip">
-              <span className="meta-label">Account</span>
-              <span className="mono">
-                {report.account_check.actual_account_id ?? "—"}
-              </span>
-            </div>
+          <div className="ops-header-side">
+            <span className="ops-env">
+              {environment ? `${environment} · ` : ""}
+              {report.region}
+            </span>
+            <span className={`ops-health ${overallTone}`}>
+              <span className={`status-pulse ${overallTone}`} />
+              {overall === "PASS"
+                ? "ALL SYSTEMS HEALTHY"
+                : overall === "WARN"
+                  ? "SYSTEMS DEGRADED"
+                  : "SYSTEMS UNHEALTHY"}
+            </span>
           </div>
-
-          {report.account_check.status === "FAIL" && (
-            <div className="account-alert">{report.account_check.message}</div>
-          )}
         </header>
 
+        {report.account_check.status === "FAIL" && (
+          <div className="account-alert">{report.account_check.message}</div>
+        )}
+
+        <KpiStrip report={report} />
+        <HealthBar report={report} />
         <ExecutiveBrief report={report} onSelect={selectService} />
 
         {report.results.length === 0 ? (
@@ -112,7 +116,8 @@ export default function App() {
           Array.from(clusters.entries()).map(([cluster, services]) => {
             const ordered = sortBySeverity(services);
             const selected =
-              ordered.find((item) => serviceKey(item) === selectedKey) ?? ordered[0];
+              ordered.find((item) => serviceKey(item) === selectedKey) ??
+              ordered[0];
             const section = sectionByCluster[cluster] ?? "services";
             const targetGroups = collectClusterTargetGroups(services);
             const loadBalancers = collectClusterLoadBalancers(services);
@@ -129,7 +134,11 @@ export default function App() {
                   <span>{services.length} services</span>
                 </div>
 
-                <div className="section-tabs" role="tablist" aria-label={`${cluster} views`}>
+                <div
+                  className="section-tabs"
+                  role="tablist"
+                  aria-label={`${cluster} views`}
+                >
                   {(
                     [
                       ["services", "Services", services.length],
@@ -145,7 +154,10 @@ export default function App() {
                       aria-selected={section === id}
                       className={`section-tab${section === id ? " active" : ""}`}
                       onClick={() =>
-                        setSectionByCluster((prev) => ({ ...prev, [cluster]: id }))
+                        setSectionByCluster((prev) => ({
+                          ...prev,
+                          [cluster]: id,
+                        }))
                       }
                     >
                       {label}
@@ -156,30 +168,16 @@ export default function App() {
 
                 {section === "services" && (
                   <>
-                    <div className="service-tiles" role="tablist" aria-label={`${cluster} services`}>
+                    <div className="ops-service-grid">
                       {ordered.map((item) => {
                         const key = serviceKey(item);
-                        const active = selected && serviceKey(selected) === key;
                         return (
-                          <button
+                          <ServiceOpsCard
                             key={key}
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            className={`service-tile ${item.status.toLowerCase()}${active ? " active" : ""}`}
-                            onClick={() => setSelectedKey(key)}
-                          >
-                            <span className="service-tile-top">
-                              <StatusLight light={serviceLight(item)} />
-                              <span className="service-tile-state">
-                                {statusLabel(item.status)}
-                              </span>
-                            </span>
-                            <strong>{item.service}</strong>
-                            <span className="service-tile-snap">
-                              {serviceSnapshot(item)}
-                            </span>
-                          </button>
+                            item={item}
+                            active={selected && serviceKey(selected) === key}
+                            onSelect={() => setSelectedKey(key)}
+                          />
                         );
                       })}
                     </div>
@@ -187,7 +185,18 @@ export default function App() {
                     {selected && (
                       <div className="service-tab-panel" role="tabpanel">
                         <div className="service-tab-panel-head">
-                          <h3>{selected.service}</h3>
+                          <div>
+                            <h3>{selected.service}</h3>
+                            <p className="ops-detail-meta">
+                              {selected.cluster}
+                              {serviceMetrics(selected).env
+                                ? ` · ${serviceMetrics(selected).env}`
+                                : ""}
+                              {selected.launch_type
+                                ? ` · ${selected.launch_type}`
+                                : ""}
+                            </p>
+                          </div>
                           <StatusBadge
                             status={selected.status}
                             label={statusLabel(selected.status)}
@@ -216,7 +225,8 @@ export default function App() {
         )}
 
         <footer className="footer">
-          ECS Health Report v{report.version} · Services, target groups, load balancers, and Route 53
+          ECS Health Report v{report.version} · Account{" "}
+          {report.account_check.actual_account_id ?? "—"} · {report.region}
         </footer>
       </main>
     </div>

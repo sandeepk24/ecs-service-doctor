@@ -184,6 +184,159 @@ export function shortTaskDefinition(arn?: string): string {
   return arn.split("/").pop() ?? arn;
 }
 
+export type Tone = "healthy" | "warning" | "critical" | "unknown";
+
+export function toneFromStatus(status?: string): Tone {
+  if (status === "PASS") return "healthy";
+  if (status === "WARN") return "warning";
+  if (status === "FAIL") return "critical";
+  return "unknown";
+}
+
+export function inferEnvironment(cluster?: string): string | undefined {
+  const name = (cluster || "").toLowerCase();
+  if (!name) return undefined;
+  if (name.includes("prod")) return "PROD";
+  if (name.includes("stag")) return "STAGE";
+  if (name.includes("dev")) return "DEV";
+  if (name.includes("test")) return "TEST";
+  return undefined;
+}
+
+export function reportEnvironment(report: EcsReport): string | undefined {
+  const values = [
+    ...new Set(
+      report.results
+        .map((item) => inferEnvironment(item.cluster))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  return values.length === 1 ? values[0] : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function targetCounts(item: ServiceResult): {
+  healthy?: number;
+  total?: number;
+} {
+  const groups =
+    (item.checks?.target_group_health?.target_groups as
+      | Array<{
+          registered_targets?: number;
+          counts?: Record<string, number>;
+        }>
+      | undefined) ?? [];
+  if (!groups.length) return {};
+  let healthy = 0;
+  let total = 0;
+  for (const group of groups) {
+    const counts = group.counts ?? {};
+    healthy += counts.healthy ?? 0;
+    total +=
+      group.registered_targets ??
+      (counts.healthy ?? 0) +
+        (counts.unhealthy ?? 0) +
+        (counts.initial ?? 0);
+  }
+  return { healthy, total };
+}
+
+export function serviceMetrics(item: ServiceResult) {
+  const counts = item.checks?.task_counts;
+  const targets = targetCounts(item);
+  const cpu = item.checks?.resources?.cpu as
+    | { utilization?: number; message?: string; status?: string }
+    | undefined;
+  const memory = item.checks?.resources?.memory as
+    | { utilization?: number; message?: string; status?: string }
+    | undefined;
+  const images =
+    (item.checks?.task_definition?.container_images as
+      | Array<{ container: string; image: string }>
+      | undefined) ?? [];
+  const stable = item.checks?.stable_tasks as
+    | {
+        stable_tasks?: Array<{
+          is_current?: boolean;
+          last_stable_at?: string;
+        }>;
+      }
+    | undefined;
+  const current = stable?.stable_tasks?.find((task) => task.is_current);
+  return {
+    running: asNumber(counts?.running),
+    desired: asNumber(counts?.desired),
+    pending: asNumber(counts?.pending),
+    deployStatus: item.checks?.deployments?.status,
+    deployMessage: item.checks?.deployments?.message,
+    targetHealthy: targets.healthy,
+    targetTotal: targets.total,
+    cpuUtil: asNumber(cpu?.utilization),
+    memUtil: asNumber(memory?.utilization),
+    cpuStatus: cpu?.status,
+    memStatus: memory?.status,
+    image: images[0]?.image,
+    revision: shortTaskDefinition(item.task_definition),
+    lastDeploy: current?.last_stable_at,
+    env: inferEnvironment(item.cluster),
+  };
+}
+
+export function fleetMetrics(report: EcsReport) {
+  let running = 0;
+  let desired = 0;
+  let tasksKnown = false;
+  let healthyTargets = 0;
+  let totalTargets = 0;
+  let targetsKnown = false;
+  let failedDeploys = 0;
+  let rollingDeploys = 0;
+
+  for (const item of report.results) {
+    const metrics = serviceMetrics(item);
+    if (metrics.running != null && metrics.desired != null) {
+      running += metrics.running;
+      desired += metrics.desired;
+      tasksKnown = true;
+    }
+    if (metrics.targetTotal != null) {
+      healthyTargets += metrics.targetHealthy ?? 0;
+      totalTargets += metrics.targetTotal;
+      targetsKnown = true;
+    }
+    if (metrics.deployStatus === "FAIL") failedDeploys += 1;
+    if (metrics.deployStatus === "WARN") rollingDeploys += 1;
+  }
+
+  const total = report.summary.total_services || report.results.length;
+  const passed = report.summary.passed;
+  const warnings = report.summary.warnings;
+  const failed = report.summary.failed;
+  const healthPct = total ? Math.round((passed / total) * 100) : 0;
+
+  return {
+    running,
+    desired,
+    tasksKnown,
+    healthyTargets,
+    totalTargets,
+    targetsKnown,
+    failedDeploys,
+    rollingDeploys,
+    passed,
+    total,
+    warnings,
+    failed,
+    healthPct,
+    failPct: total ? Math.round((failed / total) * 100) : 0,
+    warnPct: total ? Math.round((warnings / total) * 100) : 0,
+    passPct: total ? Math.round((passed / total) * 100) : 0,
+  };
+}
+
 export function serviceLight(item: ServiceResult): "green" | "red" {
   const http = item.checks?.http_health;
   const hosts = item.checks?.host_header_health;

@@ -1,4 +1,5 @@
 import type { Status } from "../types";
+import { toneFromStatus } from "../utils";
 
 interface Props {
   status: Status | string;
@@ -7,9 +8,9 @@ interface Props {
 }
 
 export function StatusBadge({ status, label, large }: Props) {
-  const css = status.toLowerCase();
+  const tone = toneFromStatus(status);
   return (
-    <span className={`status-badge ${css}${large ? " large" : ""}`}>
+    <span className={`status-badge ${tone}${large ? " large" : ""}`}>
       {label ?? status}
     </span>
   );

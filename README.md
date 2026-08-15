@@ -97,7 +97,7 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 ### HTML Service Health Report
 
 - Executive snapshot in one sentence, plus counts for healthy / attention / unhealthy
-- Compact service tiles and tabs so 7+ services stay scannable
+- Service tabs so 7+ services stay scannable
 - Green / red lights for HTTP 200 vs not 200
 - Service connection map under each cluster (who talks to whom)
 - Details stay in the selected tab — no per-service connectivity diagram
@@ -408,7 +408,7 @@ The HTML report is built for **leadership scan, then drill-down**:
 
 - One-sentence executive snapshot (healthy vs needs attention)
 - Attention list of only the services that are not healthy
-- Compact service tiles with tabs (one selected service at a time)
+- Service tabs (one selected service at a time)
 - Green / red lights for HTTP 200 vs not 200
 - Service connection map under cluster details
 - Engineering drill-down: target groups, known-good versions, ALB/NLB details, events

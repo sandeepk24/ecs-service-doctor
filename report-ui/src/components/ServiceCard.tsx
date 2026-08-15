@@ -1,23 +1,8 @@
 import type { ReportCheck, ServiceResult } from "../types";
 import type { Topology } from "./TopologyDiagram";
-import {
-  httpLabel,
-  serviceLight,
-  serviceSnapshot,
-  shortTaskDefinition,
-  statusLabel,
-  taskCapacity,
-  trafficLabel,
-} from "../utils";
+import { shortTaskDefinition, statusLabel } from "../utils";
 import { StatusBadge } from "./StatusBadge";
-import { StatusLight } from "./StatusLight";
 import { LoadBalancerPanel } from "./LoadBalancerPanel";
-
-interface Props {
-  item: ServiceResult;
-  selected: boolean;
-  onSelect: () => void;
-}
 
 interface TargetGroupCheck {
   name?: string;
@@ -165,38 +150,6 @@ function CheckRow({
         <span>{message}</span>
       </div>
     </div>
-  );
-}
-
-export function ServiceTile({ item, selected, onSelect }: Props) {
-  return (
-    <button
-      type="button"
-      className={`service-tile ${item.status.toLowerCase()}${selected ? " selected" : ""}`}
-      onClick={onSelect}
-    >
-      <div className="service-tile-top">
-        <StatusLight light={serviceLight(item)} />
-        <StatusBadge status={item.status} label={statusLabel(item.status)} />
-      </div>
-      <h3>{item.service}</h3>
-      {item.critical && <span className="critical-tag">Critical</span>}
-      <p className="service-snapshot">{serviceSnapshot(item)}</p>
-      <div className="service-tile-metrics">
-        <span>
-          <span className="mini-label">Capacity</span>
-          <strong>{taskCapacity(item)}</strong>
-        </span>
-        <span>
-          <span className="mini-label">App</span>
-          <strong>{httpLabel(item)}</strong>
-        </span>
-        <span>
-          <span className="mini-label">Traffic</span>
-          <strong>{trafficLabel(item)}</strong>
-        </span>
-      </div>
-    </button>
   );
 }
 

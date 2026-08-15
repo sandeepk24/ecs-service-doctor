@@ -18,7 +18,7 @@ export function ServiceMeshMap({ mesh, onSelect }: Props) {
           <h3>Service connections</h3>
           <p>
             Green light = up (HTTP 200). Red light = not HTTP 200. Use this map
-            after the cluster tiles to see who can reach whom.
+            after the service tabs to see who can reach whom.
           </p>
         </div>
         {mesh.summary && <span className="mesh-summary">{mesh.summary}</span>}

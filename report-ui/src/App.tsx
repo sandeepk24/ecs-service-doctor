@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import {
+  executiveHeadline,
+  executiveSubhead,
   formatTimestamp,
   groupByCluster,
   loadReport,
@@ -11,9 +13,8 @@ import {
 import type { ServiceMesh, ServiceResult } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
 import { StatusLight } from "./components/StatusLight";
-import { SummaryGrid } from "./components/SummaryGrid";
 import { ExecutiveBrief } from "./components/ExecutiveBrief";
-import { ServiceDetail, ServiceTile } from "./components/ServiceCard";
+import { ServiceDetail } from "./components/ServiceCard";
 import { ServiceMeshMap } from "./components/ServiceMeshMap";
 
 function serviceKey(item: ServiceResult) {
@@ -36,7 +37,6 @@ export default function App() {
   const report = loadReport();
   const clusters = groupByCluster(report.results);
   const overall = overallStatus(report);
-
   const defaultKey = useMemo(() => {
     const issue = sortBySeverity(report.results).find((item) => item.status !== "PASS");
     return issue ? serviceKey(issue) : report.results[0] ? serviceKey(report.results[0]) : "";
@@ -65,11 +65,16 @@ export default function App() {
             <div>
               <p className="eyebrow">Amazon ECS</p>
               <h1>Service Health Report</h1>
+              <p className="hero-headline">{executiveHeadline(report)}</p>
             </div>
             <StatusBadge status={overall} large label={statusLabel(overall)} />
           </div>
 
-          <div className="hero-meta">
+          <div className="hero-meta compact">
+            <div className="meta-chip">
+              <span className="meta-label">Fleet</span>
+              <span>{executiveSubhead(report)}</span>
+            </div>
             <div className="meta-chip">
               <span className="meta-label">Generated</span>
               <span>{formatTimestamp(report.generated_at)}</span>
@@ -84,10 +89,6 @@ export default function App() {
                 {report.account_check.actual_account_id ?? "—"}
               </span>
             </div>
-            <div className="meta-chip">
-              <span className="meta-label">Version</span>
-              <span className="mono">v{report.version}</span>
-            </div>
           </div>
 
           {report.account_check.status === "FAIL" && (
@@ -95,7 +96,6 @@ export default function App() {
           )}
         </header>
 
-        <SummaryGrid summary={report.summary} />
         <ExecutiveBrief report={report} onSelect={selectService} />
 
         {report.results.length === 0 ? (
@@ -134,20 +134,6 @@ export default function App() {
                         <StatusLight light={serviceLight(item)} />
                         <span>{item.service}</span>
                       </button>
-                    );
-                  })}
-                </div>
-
-                <div className="service-tiles">
-                  {ordered.map((item) => {
-                    const key = serviceKey(item);
-                    return (
-                      <ServiceTile
-                        key={key}
-                        item={item}
-                        selected={selected ? serviceKey(selected) === key : false}
-                        onSelect={() => setSelectedKey(key)}
-                      />
                     );
                   })}
                 </div>

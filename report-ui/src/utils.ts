@@ -92,7 +92,11 @@ export function executiveHeadline(report: EcsReport): string {
 export function executiveSubhead(report: EcsReport): string {
   const { passed, warnings, failed, total_services: total } = report.summary;
   const bits = [`${passed} healthy`];
-  if (warnings) bits.push(`${warnings} need attention`);
+  if (warnings) {
+    bits.push(
+      warnings === 1 ? "1 needs attention" : `${warnings} need attention`,
+    );
+  }
   if (failed) bits.push(`${failed} unhealthy`);
   return `${total} services checked · ${bits.join(" · ")}`;
 }

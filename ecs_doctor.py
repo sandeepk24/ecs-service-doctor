@@ -54,10 +54,12 @@ from topology import (
     build_service_mesh,
     collect_peer_hints,
     discover_connectivity,
+    empty_route53_catalog,
+    route53_report_summary,
 )
 
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2011,12 +2013,12 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
     )
     max_workers = aws_config.get("max_workers", DEFAULT_MAX_WORKERS)
 
-    route53_index: Dict[str, List[Any]] = {}
+    route53_index: Dict[str, Any] = empty_route53_catalog()
     if checks_config.get("include_connectivity_diagram", True):
         try:
             route53_index = build_route53_index(session.client("route53"))
-        except ClientError:
-            route53_index = {}
+        except ClientError as exc:
+            route53_index = empty_route53_catalog([str(exc)])
 
     report: Dict[str, Any] = {
         "tool": "ecs-service-doctor",
@@ -2032,6 +2034,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
             "critical_failed": 0,
         },
         "results": [],
+        "route53": route53_report_summary(route53_index),
     }
 
     account_check = validate_account(session, aws_config.get("expected_account_id"))
@@ -2401,6 +2404,11 @@ def build_sample_report() -> Dict[str, Any]:
             "warnings": 1,
             "failed": 1,
             "critical_failed": 1,
+        },
+        "route53": {
+            "zones_scanned": 4,
+            "records_scanned": 86,
+            "errors": [],
         },
         "results": [
             {

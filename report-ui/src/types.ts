@@ -46,6 +46,11 @@ export interface EcsReport {
   };
   results: ServiceResult[];
   mesh?: ServiceMesh;
+  route53?: {
+    zones_scanned?: number;
+    records_scanned?: number;
+    errors?: string[];
+  };
 }
 
 export interface MeshNode {

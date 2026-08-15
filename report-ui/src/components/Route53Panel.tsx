@@ -74,14 +74,36 @@ export function collectClusterDnsRecords(
 
 interface Props {
   records: ClusterDnsRecord[];
+  scan?: {
+    zones_scanned?: number;
+    records_scanned?: number;
+    errors?: string[];
+  };
 }
 
-export function Route53Panel({ records }: Props) {
+export function Route53Panel({ records, scan }: Props) {
   if (!records.length) {
+    const zones = scan?.zones_scanned ?? 0;
+    const scanned = scan?.records_scanned ?? 0;
+    const errors = scan?.errors ?? [];
     return (
       <div className="empty-panel">
-        No Route 53 records point at load balancers in this cluster. Records
-        show up when an alias or CNAME targets the ALB/NLB DNS name.
+        <p>
+          No Route 53 records matched load balancers or listener host names in
+          this cluster.
+        </p>
+        <p>
+          {zones || scanned
+            ? `Scanned ${zones} hosted zone${zones === 1 ? "" : "s"} and ${scanned} A/AAAA/CNAME record${scanned === 1 ? "" : "s"} in the account.`
+            : "Route 53 zones were not listed. Check IAM for ListHostedZones and ListResourceRecordSets."}
+        </p>
+        {errors.length > 0 && (
+          <ul className="target-group-issues">
+            {errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        )}
       </div>
     );
   }

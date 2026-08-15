@@ -202,7 +202,7 @@ export default function App() {
                 )}
 
                 {section === "route-53" && (
-                  <Route53Panel records={dnsRecords} />
+                  <Route53Panel records={dnsRecords} scan={report.route53} />
                 )}
               </section>
             );

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -51,35 +52,102 @@ def _node_id(prefix: str, label: str) -> str:
     return f"{prefix}_{safe}"
 
 
+ROUTE53_INDEX_TYPES = {"A", "AAAA", "CNAME"}
+ELB_IDENTITY_RE = re.compile(
+    r"^(?:internal-)?(.+?)\.(?:[a-z0-9-]+\.)?elb(?:\.[a-z0-9-]+)?\.amazonaws\.com(?:\.cn)?$",
+    re.I,
+)
+
+
+def normalize_hostname(name: str) -> str:
+    return (name or "").strip().rstrip(".").lower()
+
+
 def normalize_elb_dns(name: str) -> str:
     """ALB DNS and Route 53 alias targets differ by trailing dots and dualstack."""
-    host = (name or "").strip().rstrip(".").lower()
-    for prefix in ("dualstack.", "ipv6."):
-        if host.startswith(prefix):
-            host = host[len(prefix) :]
+    host = normalize_hostname(name)
+    changed = True
+    while changed:
+        changed = False
+        for prefix in ("dualstack.", "ipv6."):
+            if host.startswith(prefix):
+                host = host[len(prefix) :]
+                changed = True
     return host
+
+
+def _elb_identity(dns_name: str) -> str:
+    match = ELB_IDENTITY_RE.match(normalize_elb_dns(dns_name))
+    return match.group(1).lower() if match else ""
+
+
+def _targets_same_elb(target: str, lb_dns: str) -> bool:
+    left = normalize_elb_dns(target)
+    right = normalize_elb_dns(lb_dns)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_id = _elb_identity(left)
+    right_id = _elb_identity(right)
+    return bool(left_id and right_id and left_id == right_id)
+
+
+def empty_route53_catalog(
+    errors: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    return {
+        "by_target": {},
+        "by_name": {},
+        "wildcards": {},
+        "stats": {"zones": 0, "records": 0},
+        "errors": list(errors or []),
+    }
+
+
+def _as_route53_catalog(route53_index: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not route53_index:
+        return empty_route53_catalog()
+    if "by_target" in route53_index:
+        return route53_index
+    return {
+        "by_target": route53_index,
+        "by_name": {},
+        "wildcards": {},
+        "stats": {"zones": 0, "records": 0},
+        "errors": [],
+    }
+
+
+def route53_report_summary(route53_index: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    catalog = _as_route53_catalog(route53_index)
+    stats = catalog.get("stats") or {}
+    return {
+        "zones_scanned": int(stats.get("zones") or 0),
+        "records_scanned": int(stats.get("records") or 0),
+        "errors": list(catalog.get("errors") or [])[:12],
+    }
 
 
 def lookup_route53_records(
     route53_index: Dict[str, List[Any]],
     dns_name: str,
+    extra_hosts: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    if not dns_name or not route53_index:
-        return []
-    raw = (
-        route53_index.get(normalize_elb_dns(dns_name))
-        or route53_index.get(dns_name)
-        or []
-    )
+    catalog = _as_route53_catalog(route53_index)
+    by_target: Dict[str, List[Any]] = catalog.get("by_target") or {}
+    by_name: Dict[str, List[Any]] = catalog.get("by_name") or {}
+    wildcards: Dict[str, List[Any]] = catalog.get("wildcards") or {}
     records: List[Dict[str, Any]] = []
     seen: Set[Tuple[str, Optional[str]]] = set()
-    for item in raw:
+
+    def add_item(item: Any, fallback_target: Optional[str] = None) -> None:
         if isinstance(item, str):
             record = {
                 "name": item.rstrip("."),
                 "type": "A",
                 "alias": True,
-                "target": dns_name,
+                "target": fallback_target or dns_name,
             }
         else:
             record = dict(item)
@@ -88,53 +156,117 @@ def lookup_route53_records(
         name = record.get("name")
         marker = (str(name), record.get("type"))
         if not name or marker in seen:
-            continue
+            return
         seen.add(marker)
         records.append(record)
+
+    lb_dns = normalize_elb_dns(dns_name or "")
+    if lb_dns:
+        for target_key, items in by_target.items():
+            if _targets_same_elb(str(target_key), lb_dns):
+                for item in items:
+                    add_item(item, dns_name)
+
+    for extra in extra_hosts or []:
+        host = normalize_hostname(str(extra))
+        if not host or "*" in host:
+            continue
+        for item in by_name.get(host) or []:
+            add_item(item)
+        for pattern, items in wildcards.items():
+            if fnmatch.fnmatch(host, pattern):
+                for item in items:
+                    add_item(item)
+
+    found_names = {normalize_hostname(str(item.get("name"))) for item in records}
+    hops = 0
+    changed = True
+    while changed and hops < 3:
+        changed = False
+        hops += 1
+        for name in list(found_names):
+            if not name:
+                continue
+            chained = list(by_target.get(name) or [])
+            chained.extend(by_target.get(normalize_elb_dns(name)) or [])
+            before = len(records)
+            for item in chained:
+                add_item(item)
+            if len(records) > before:
+                found_names = {
+                    normalize_hostname(str(item.get("name"))) for item in records
+                }
+                changed = True
+
     return records
 
 
-def build_route53_index(route53_client) -> Dict[str, List[Dict[str, Any]]]:
-    """Map normalized ALB/NLB DNS name -> Route 53 records pointing at it."""
-    index: Dict[str, List[Dict[str, Any]]] = {}
+def build_route53_index(route53_client) -> Dict[str, Any]:
+    """Index Route 53 A/AAAA/CNAME records by target and by name."""
+    catalog = empty_route53_catalog()
+    by_target: Dict[str, List[Dict[str, Any]]] = catalog["by_target"]
+    by_name: Dict[str, List[Dict[str, Any]]] = catalog["by_name"]
+    wildcards: Dict[str, List[Dict[str, Any]]] = catalog["wildcards"]
+    errors: List[str] = catalog["errors"]
+    zones = 0
+    record_count = 0
 
     try:
         zone_paginator = route53_client.get_paginator("list_hosted_zones")
-        for zone_page in zone_paginator.paginate():
-            for zone in zone_page.get("HostedZones", []):
-                zone_id = zone["Id"].split("/")[-1]
-                zone_name = (zone.get("Name") or "").rstrip(".")
+        zone_pages = zone_paginator.paginate()
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"ListHostedZones failed: {exc}")
+        return catalog
+
+    for zone_page in zone_pages:
+        for zone in zone_page.get("HostedZones", []):
+            zone_id = zone["Id"].split("/")[-1]
+            zone_name = (zone.get("Name") or "").rstrip(".")
+            zones += 1
+            try:
                 record_paginator = route53_client.get_paginator(
                     "list_resource_record_sets"
                 )
                 for record_page in record_paginator.paginate(HostedZoneId=zone_id):
                     for record in record_page.get("ResourceRecordSets", []):
+                        record_type = str(record.get("Type") or "")
+                        if record_type not in ROUTE53_INDEX_TYPES:
+                            continue
                         record_name = (record.get("Name") or "").rstrip(".")
-                        record_type = record.get("Type")
+                        if not record_name:
+                            continue
+                        record_count += 1
                         alias = record.get("AliasTarget")
                         targets: List[Tuple[str, bool]] = []
                         if alias:
                             targets.append((alias.get("DNSName") or "", True))
                         for rr in record.get("ResourceRecords", []):
                             targets.append((rr.get("Value") or "", False))
+                        name_key = normalize_hostname(record_name)
+                        named = False
                         for target, is_alias in targets:
-                            key = normalize_elb_dns(target)
-                            if not key or not record_name:
-                                continue
-                            index.setdefault(key, []).append(
-                                {
-                                    "name": record_name,
-                                    "type": record_type,
-                                    "alias": is_alias,
-                                    "zone_id": zone_id,
-                                    "zone_name": zone_name,
-                                    "target": target.rstrip("."),
-                                }
-                            )
-    except Exception:
-        return {}
+                            payload = {
+                                "name": record_name,
+                                "type": record_type,
+                                "alias": is_alias,
+                                "zone_id": zone_id,
+                                "zone_name": zone_name,
+                                "target": (target or "").rstrip("."),
+                            }
+                            if not named:
+                                by_name.setdefault(name_key, []).append(payload)
+                                if "*" in name_key:
+                                    wildcards.setdefault(name_key, []).append(payload)
+                                named = True
+                            target_key = normalize_elb_dns(target)
+                            if target_key:
+                                by_target.setdefault(target_key, []).append(payload)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{zone_name or zone_id}: {exc}")
+                continue
 
-    return index
+    catalog["stats"] = {"zones": zones, "records": record_count}
+    return catalog
 
 
 def discover_load_balancers(
@@ -559,7 +691,15 @@ def build_topology(
             edges.append({"from": lb_id, "to": ecs_id, "label": "routes traffic"})
 
         dns_name = load_balancer.get("dns_name", "")
-        records = lookup_route53_records(route53_index, dns_name)
+        extra_hosts: List[str] = []
+        for listener in load_balancer.get("listeners") or []:
+            for rule in listener.get("host_header_rules") or []:
+                extra_hosts.extend(rule.get("hosts") or [])
+        records = lookup_route53_records(
+            route53_index,
+            dns_name,
+            extra_hosts=extra_hosts,
+        )
         load_balancer["dns_records"] = records
         if records:
             for record in records:

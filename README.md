@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.8.0**):
+Everything this repo provides today (**v0.8.1**):
 
 ### Application health checks
 
@@ -52,7 +52,7 @@ Shareable, self-contained HTML (no external assets after export):
 - **Service picker** — green/red lights, then a short detail panel: capacity, CPU, memory, release, traffic, app, endpoints, known-good versions, events
 - **Target groups tab** — every group in the cluster once, with service, port, health-check path/matcher, and healthy/unhealthy counts
 - **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
-- **Route 53 tab** — DNS records that alias or CNAME to those load balancers, with the services behind them
+- **Route 53 tab** — DNS records that alias or CNAME to cluster ALBs/NLBs, plus names that match listener host headers (CloudFront and CNAME chains included)
 - Sample: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### Continuous monitoring and alerts
@@ -71,7 +71,7 @@ Shareable, self-contained HTML (no external assets after export):
 - **Attachment validation** — target group exists, is attached to ALB/NLB, ECS container name/port matches the task definition
 - **Target health** — healthy, unhealthy, and registering target counts
 - **ALB / NLB details** — DNS, scheme, VPC, AZs, listeners, SSL policy, host-header rules with priority numbers
-- **Route 53** — hosted-zone records that alias or CNAME to the ALB/NLB (including `dualstack.` targets)
+- **Route 53** — hosted-zone records that alias or CNAME to the ALB/NLB (including `dualstack.` targets), plus records whose names match listener host headers
 - **Host-header + Route 53 health** — each hostname that belongs to this service is checked using the target-group path and matcher
 - **Classic ELB notice** — warns when a service uses a classic load balancer (ALB/NLB required for full TG checks)
 

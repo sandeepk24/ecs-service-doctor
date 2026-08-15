@@ -1,31 +1,69 @@
-import type { LoadBalancerDetail } from "./TopologyDiagram";
+import type { ServiceResult } from "../types";
+import type { LoadBalancerDetail, Topology } from "./TopologyDiagram";
+
+export interface ClusterLoadBalancer extends LoadBalancerDetail {
+  key: string;
+  services: string[];
+}
+
+export function collectClusterLoadBalancers(
+  services: ServiceResult[],
+): ClusterLoadBalancer[] {
+  const map = new Map<string, ClusterLoadBalancer>();
+  for (const item of services) {
+    const connectivity = item.checks?.connectivity as Topology | undefined;
+    for (const lb of connectivity?.load_balancers ?? []) {
+      const key = lb.arn ?? lb.name ?? `${item.service}-lb`;
+      const existing = map.get(key);
+      if (existing) {
+        if (!existing.services.includes(item.service)) {
+          existing.services.push(item.service);
+        }
+        continue;
+      }
+      map.set(key, { ...lb, key, services: [item.service] });
+    }
+  }
+  return [...map.values()];
+}
 
 interface Props {
-  loadBalancers?: LoadBalancerDetail[];
+  loadBalancers: ClusterLoadBalancer[];
 }
 
 export function LoadBalancerPanel({ loadBalancers }: Props) {
-  if (!loadBalancers?.length) {
-    return null;
+  if (!loadBalancers.length) {
+    return (
+      <div className="empty-panel">
+        No load balancers are attached to services in this cluster.
+      </div>
+    );
   }
 
   return (
     <div className="lb-panel">
       <div className="lb-panel-head">
-        <h4>Load balancer details</h4>
-        <span>{loadBalancers.length} attached</span>
+        <h4>Load balancers</h4>
+        <span>
+          {loadBalancers.length} attached
+        </span>
       </div>
       <div className="lb-list">
         {loadBalancers.map((lb) => {
           const kind = (lb.lb_type || lb.type || "application").toLowerCase();
           const title = kind === "network" || lb.type === "nlb" ? "NLB" : "ALB";
           return (
-            <article key={lb.arn ?? lb.name} className="lb-card">
+            <article key={lb.key} className="lb-card">
               <header>
                 <span className="lb-kind">{title}</span>
                 <strong>{lb.name ?? "load balancer"}</strong>
                 {lb.state && <span className={`lb-state ${lb.state}`}>{lb.state}</span>}
               </header>
+              {lb.services.length > 0 && (
+                <p className="lb-services">
+                  Services: {lb.services.join(", ")}
+                </p>
+              )}
               <dl className="lb-facts">
                 {lb.dns_name && (
                   <>
@@ -100,7 +138,8 @@ export function LoadBalancerPanel({ loadBalancers }: Props) {
                           {listener.protocol}:{listener.port}
                         </strong>
                         <span>
-                          {(listener.default_actions ?? []).join(" · ") || "no default action"}
+                          {(listener.default_actions ?? []).join(" · ") ||
+                            "no default action"}
                         </span>
                         {listener.ssl_policy && (
                           <span className="lb-ssl">{listener.ssl_policy}</span>

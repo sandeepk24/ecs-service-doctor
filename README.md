@@ -97,11 +97,10 @@ Rough traffic and dependency diagram per service (CLI summary + HTML diagram):
 ### HTML Service Health Report
 
 - Executive snapshot in one sentence, plus counts for healthy / attention / unhealthy
-- Service tabs so 7+ services stay scannable
-- Green / red lights for HTTP 200 vs not 200
-- Service connection map under each cluster (who talks to whom)
-- Details stay in the selected tab — no per-service connectivity diagram
-- Engineering drill-down: target groups, known-good versions, connectivity, events
+- Cluster tabs for Services, Target groups, and Load balancers
+- Service picker with green / red lights for HTTP 200 vs not 200
+- Target groups and load balancers listed once per cluster, not repeated on every service
+- Service details stay short: health checks, known-good versions, events
 - Sample report: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### CI/CD and safety
@@ -408,10 +407,9 @@ The HTML report is built for **leadership scan, then drill-down**:
 
 - One-sentence executive snapshot (healthy vs needs attention)
 - Attention list of only the services that are not healthy
-- Service tabs (one selected service at a time)
+- Cluster tabs for Services, Target groups, and Load balancers
 - Green / red lights for HTTP 200 vs not 200
-- Service connection map under cluster details
-- Engineering drill-down: target groups, known-good versions, ALB/NLB details, events
+- Engineering drill-down: known-good versions, events, plus cluster-wide TG and ALB/NLB views
 
 Built with **React + Vite** (`report-ui/`) — dark theme, gradient accents, and Plus Jakarta Sans / DM Sans / JetBrains Mono fonts.
 

@@ -10,27 +10,24 @@ import {
   statusLabel,
   serviceLight,
 } from "./utils";
-import type { ServiceMesh, ServiceResult } from "./types";
+import type { ServiceResult } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
 import { StatusLight } from "./components/StatusLight";
 import { ExecutiveBrief } from "./components/ExecutiveBrief";
 import { ServiceDetail } from "./components/ServiceCard";
-import { ServiceMeshMap } from "./components/ServiceMeshMap";
+import {
+  collectClusterLoadBalancers,
+  LoadBalancerPanel,
+} from "./components/LoadBalancerPanel";
+import {
+  collectClusterTargetGroups,
+  TargetGroupsPanel,
+} from "./components/TargetGroupsPanel";
+
+type ClusterSection = "services" | "target-groups" | "load-balancers";
 
 function serviceKey(item: ServiceResult) {
   return `${item.cluster}::${item.service}`;
-}
-
-function meshForCluster(mesh: ServiceMesh | undefined, cluster: string): ServiceMesh | null {
-  if (!mesh?.nodes?.length) return null;
-  const nodes = mesh.nodes.filter((node) => node.cluster === cluster);
-  if (!nodes.length) return null;
-  const ids = new Set(nodes.map((node) => node.id));
-  return {
-    summary: mesh.summary,
-    nodes,
-    edges: (mesh.edges ?? []).filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
-  };
 }
 
 export default function App() {
@@ -43,11 +40,16 @@ export default function App() {
   }, [report.results]);
 
   const [selectedKey, setSelectedKey] = useState(defaultKey);
+  const [sectionByCluster, setSectionByCluster] = useState<
+    Record<string, ClusterSection>
+  >({});
 
   const selectService = (key: string) => {
+    const cluster = key.split("::")[0];
+    setSectionByCluster((prev) => ({ ...prev, [cluster]: "services" }));
     setSelectedKey(key);
     window.requestAnimationFrame(() => {
-      document.getElementById(`cluster-${key.split("::")[0]}`)?.scrollIntoView({
+      document.getElementById(`cluster-${cluster}`)?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
@@ -105,7 +107,9 @@ export default function App() {
             const ordered = sortBySeverity(services);
             const selected =
               ordered.find((item) => serviceKey(item) === selectedKey) ?? ordered[0];
-            const clusterMesh = meshForCluster(report.mesh, cluster);
+            const section = sectionByCluster[cluster] ?? "services";
+            const targetGroups = collectClusterTargetGroups(services);
+            const loadBalancers = collectClusterLoadBalancers(services);
 
             return (
               <section
@@ -118,41 +122,73 @@ export default function App() {
                   <span>{services.length} services</span>
                 </div>
 
-                <div className="service-tabs" role="tablist" aria-label={`${cluster} services`}>
-                  {ordered.map((item) => {
-                    const key = serviceKey(item);
-                    const active = selected && serviceKey(selected) === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        className={`service-tab ${item.status.toLowerCase()}${active ? " active" : ""}`}
-                        onClick={() => setSelectedKey(key)}
-                      >
-                        <StatusLight light={serviceLight(item)} />
-                        <span>{item.service}</span>
-                      </button>
-                    );
-                  })}
+                <div className="section-tabs" role="tablist" aria-label={`${cluster} views`}>
+                  {(
+                    [
+                      ["services", "Services", services.length],
+                      ["target-groups", "Target groups", targetGroups.length],
+                      ["load-balancers", "Load balancers", loadBalancers.length],
+                    ] as const
+                  ).map(([id, label, count]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={section === id}
+                      className={`section-tab${section === id ? " active" : ""}`}
+                      onClick={() =>
+                        setSectionByCluster((prev) => ({ ...prev, [cluster]: id }))
+                      }
+                    >
+                      {label}
+                      <em>{count}</em>
+                    </button>
+                  ))}
                 </div>
 
-                {selected && (
-                  <div className="service-tab-panel" role="tabpanel">
-                    <div className="service-tab-panel-head">
-                      <h3>{selected.service}</h3>
-                      <StatusBadge
-                        status={selected.status}
-                        label={statusLabel(selected.status)}
-                      />
+                {section === "services" && (
+                  <>
+                    <div className="service-tabs" role="tablist" aria-label={`${cluster} services`}>
+                      {ordered.map((item) => {
+                        const key = serviceKey(item);
+                        const active = selected && serviceKey(selected) === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            className={`service-tab ${item.status.toLowerCase()}${active ? " active" : ""}`}
+                            onClick={() => setSelectedKey(key)}
+                          >
+                            <StatusLight light={serviceLight(item)} />
+                            <span>{item.service}</span>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <ServiceDetail item={selected} />
-                  </div>
+
+                    {selected && (
+                      <div className="service-tab-panel" role="tabpanel">
+                        <div className="service-tab-panel-head">
+                          <h3>{selected.service}</h3>
+                          <StatusBadge
+                            status={selected.status}
+                            label={statusLabel(selected.status)}
+                          />
+                        </div>
+                        <ServiceDetail item={selected} />
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {clusterMesh && (
-                  <ServiceMeshMap mesh={clusterMesh} onSelect={selectService} />
+                {section === "target-groups" && (
+                  <TargetGroupsPanel groups={targetGroups} />
+                )}
+
+                {section === "load-balancers" && (
+                  <LoadBalancerPanel loadBalancers={loadBalancers} />
                 )}
               </section>
             );
@@ -160,7 +196,7 @@ export default function App() {
         )}
 
         <footer className="footer">
-          ECS Health Report v{report.version} · Select a service tab for details
+          ECS Health Report v{report.version} · Services, target groups, and load balancers
         </footer>
       </main>
     </div>

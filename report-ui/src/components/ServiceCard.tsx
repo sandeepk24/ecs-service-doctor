@@ -1,89 +1,6 @@
 import type { ReportCheck, ServiceResult } from "../types";
-import type { Topology } from "./TopologyDiagram";
 import { shortTaskDefinition, statusLabel } from "../utils";
 import { StatusBadge } from "./StatusBadge";
-import { LoadBalancerPanel } from "./LoadBalancerPanel";
-
-interface TargetGroupCheck {
-  name?: string;
-  attachment_ok?: boolean;
-  attachment_issues?: string[];
-  ecs_container_name?: string;
-  ecs_container_port?: number;
-  port?: number;
-  protocol?: string;
-  registered_targets?: number;
-  counts?: Record<string, number>;
-}
-
-function TargetGroupSection({
-  targetHealth,
-}: {
-  targetHealth?: ReportCheck & {
-    target_groups?: TargetGroupCheck[];
-    attachment_summary?: string;
-  };
-}) {
-  const groups = targetHealth?.target_groups ?? [];
-  if (!groups.length) return null;
-
-  return (
-    <div className="target-groups">
-      <div className="target-groups-head">
-        <h4>Target groups</h4>
-        {targetHealth?.attachment_summary && (
-          <span className="target-groups-summary">{targetHealth.attachment_summary}</span>
-        )}
-      </div>
-      <ul className="target-group-list">
-        {groups.map((group) => {
-          const healthy = group.counts?.healthy ?? 0;
-          const unhealthy = group.counts?.unhealthy ?? 0;
-          const healthBits = [
-            healthy ? `${healthy} healthy` : null,
-            unhealthy ? `${unhealthy} unhealthy` : null,
-          ].filter(Boolean);
-
-          return (
-            <li
-              key={group.name ?? group.ecs_container_name}
-              className={`target-group-item ${group.attachment_ok ? "ok" : "issue"}`}
-            >
-              <div className="target-group-title">
-                <strong>{group.name ?? "target group"}</strong>
-                <StatusBadge
-                  status={group.attachment_ok ? "PASS" : "FAIL"}
-                  label={group.attachment_ok ? "OK" : "Issue"}
-                />
-              </div>
-              <div className="target-group-meta">
-                {group.protocol && group.port != null && (
-                  <span>
-                    {group.protocol}:{group.port}
-                  </span>
-                )}
-                {group.ecs_container_name && (
-                  <span>
-                    {group.ecs_container_name}
-                    {group.ecs_container_port != null ? `:${group.ecs_container_port}` : ""}
-                  </span>
-                )}
-                {healthBits.length > 0 && <span>{healthBits.join(" · ")}</span>}
-              </div>
-              {group.attachment_issues?.length ? (
-                <ul className="target-group-issues">
-                  {group.attachment_issues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
 
 function StableTasksSection({
   stableTasks,
@@ -157,7 +74,6 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
   const checks = item.checks ?? {};
   const events = checks.recent_events?.events ?? [];
   const images = checks.task_definition?.container_images ?? [];
-  const connectivity = checks.connectivity as Topology | undefined;
 
   if (item.error) {
     return <div className="service-error">{item.error}</div>;
@@ -201,8 +117,6 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
         />
       </div>
 
-      <TargetGroupSection targetHealth={checks.target_group_health} />
-      <LoadBalancerPanel loadBalancers={connectivity?.load_balancers} />
       <StableTasksSection stableTasks={checks.stable_tasks} />
 
       {images.length > 0 && (

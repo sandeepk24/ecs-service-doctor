@@ -303,6 +303,48 @@ body {
   display: none;
 }
 
+.section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-tab {
+  padding: 0.55rem 0.85rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.section-tab em {
+  margin-left: 0.4rem;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.section-tab.active {
+  color: var(--text);
+  border-bottom-color: #a5b4fc;
+}
+
+.empty-panel {
+  padding: 1rem 0.2rem 0.4rem;
+  color: var(--muted);
+}
+
+.lb-services {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .service-tabs {
   display: flex;
   flex-wrap: wrap;

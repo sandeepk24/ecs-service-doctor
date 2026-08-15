@@ -55,7 +55,7 @@ from topology import (
 )
 
 
-VERSION = "0.7.5"
+VERSION = "0.7.6"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2224,6 +2224,75 @@ def _sample_healthy_services() -> List[Dict[str, Any]]:
                         "status": STATUS_PASS,
                         "message": (
                             f"Target groups attached correctly: healthy={desired}, unhealthy=0"
+                        ),
+                        "attachment_ok": True,
+                        "attachment_summary": (
+                            f"1 target group(s): tg-{name} — attachments look correct"
+                        ),
+                        "target_groups": (
+                            []
+                            if name == "notifications-worker"
+                            else [
+                                {
+                                    "name": f"tg-{name}",
+                                    "target_group_arn": (
+                                        "arn:aws:elasticloadbalancing:us-east-1:"
+                                        f"123456789012:targetgroup/tg-{name}/sample"
+                                    ),
+                                    "ecs_container_name": name,
+                                    "ecs_container_port": 8080,
+                                    "port": 8080,
+                                    "protocol": "HTTP",
+                                    "target_type": "ip",
+                                    "load_balancer_count": 1,
+                                    "registered_targets": desired,
+                                    "attachment_ok": True,
+                                    "attachment_issues": [],
+                                    "counts": {
+                                        "healthy": desired,
+                                        "unhealthy": 0,
+                                        "initial": 0,
+                                    },
+                                }
+                            ]
+                        ),
+                    },
+                    "connectivity": {
+                        "status": STATUS_PASS,
+                        "summary": "Load Balancer → Target Group → ECS",
+                        "load_balancers": (
+                            []
+                            if name == "notifications-worker"
+                            else [
+                                {
+                                    "arn": (
+                                        "arn:aws:elasticloadbalancing:us-east-1:"
+                                        "123456789012:loadbalancer/app/dev-apps-alb/abc"
+                                    ),
+                                    "type": "alb",
+                                    "lb_type": "application",
+                                    "name": "dev-apps-alb",
+                                    "dns_name": (
+                                        "dev-apps-alb-123.us-east-1.elb.amazonaws.com"
+                                    ),
+                                    "scheme": "internet-facing",
+                                    "state": "active",
+                                    "vpc_id": "vpc-0123456789abcdef0",
+                                    "ip_address_type": "ipv4",
+                                    "availability_zones": ["us-east-1a", "us-east-1b"],
+                                    "security_groups": ["sg-orders-alb"],
+                                    "listeners": [
+                                        {
+                                            "protocol": "HTTPS",
+                                            "port": 443,
+                                            "ssl_policy": (
+                                                "ELBSecurityPolicy-TLS13-1-2-2021-06"
+                                            ),
+                                            "default_actions": [f"forward → tg-{name}"],
+                                        }
+                                    ],
+                                }
+                            ]
                         ),
                     },
                     "http_health": {

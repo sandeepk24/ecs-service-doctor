@@ -27,6 +27,7 @@ import {
   collectClusterDnsRecords,
   Route53Panel,
 } from "./components/Route53Panel";
+import { LogsPanel } from "./components/LogsPanel";
 import { EcsLogo } from "./components/EcsLogo";
 
 type ClusterSection =

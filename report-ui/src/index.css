@@ -3,16 +3,16 @@
   --font-body: "Figtree", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  --picotte: #1a4d73;
-  --celeste: #9eeaf4;
-  --bg-0: #071824;
-  --bg-1: #0c2438;
-  --bg-2: #143a58;
-  --card: rgba(18, 62, 94, 0.55);
-  --card-border: rgba(158, 234, 244, 0.2);
-  --text: #eef9fc;
-  --muted: #8fb8c8;
-  --line: rgba(158, 234, 244, 0.14);
+  --plum: #dda0dd;
+  --lavender: #e6e6fa;
+  --bg-0: #16121c;
+  --bg-1: #1e1826;
+  --bg-2: #2a2236;
+  --card: rgba(72, 48, 78, 0.58);
+  --card-border: rgba(230, 230, 250, 0.22);
+  --text: #f4f2fb;
+  --muted: #b8b0cc;
+  --line: rgba(221, 160, 221, 0.18);
 
   --pass: #7dcea0;
   --pass-bg: rgba(125, 206, 160, 0.16);
@@ -26,10 +26,10 @@
   --fail-bg: rgba(224, 122, 106, 0.16);
   --fail-glow: rgba(224, 122, 106, 0.3);
 
-  --accent-a: #1a4d73;
-  --accent-b: #9eeaf4;
-  --accent-c: #2a6f99;
-  --shadow: 0 28px 70px rgba(4, 16, 28, 0.5);
+  --accent-a: #dda0dd;
+  --accent-b: #e6e6fa;
+  --accent-c: #9b6fa8;
+  --shadow: 0 28px 70px rgba(12, 8, 18, 0.5);
 }
 
 * {
@@ -47,9 +47,9 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   background:
-    radial-gradient(circle at 12% -10%, rgba(26, 77, 115, 0.55), transparent 34%),
-    radial-gradient(circle at 88% 8%, rgba(158, 234, 244, 0.18), transparent 30%),
-    linear-gradient(180deg, var(--bg-0), #06141f 58%, #041018);
+    radial-gradient(circle at 12% -10%, rgba(221, 160, 221, 0.28), transparent 34%),
+    radial-gradient(circle at 88% 8%, rgba(230, 230, 250, 0.16), transparent 30%),
+    linear-gradient(180deg, var(--bg-0), #120e18 58%, #0e0b14);
 }
 
 .page {
@@ -101,7 +101,7 @@ body {
 
 .hero {
   background:
-    linear-gradient(145deg, rgba(26, 77, 115, 0.35), rgba(158, 234, 244, 0.1) 42%, transparent 70%),
+    linear-gradient(145deg, rgba(221, 160, 221, 0.22), rgba(230, 230, 250, 0.1) 42%, transparent 70%),
     var(--card);
   border-radius: 26px;
   padding: 1.85rem 1.8rem;
@@ -120,7 +120,7 @@ body {
   font-size: 0.78rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--celeste);
+  color: var(--lavender);
   font-weight: 600;
 }
 
@@ -131,7 +131,7 @@ body {
   font-weight: 600;
   font-optical-sizing: auto;
   letter-spacing: -0.035em;
-  background: linear-gradient(135deg, #f4fcfe 8%, #9eeaf4 55%, #6ec4d8 100%);
+  background: linear-gradient(135deg, #ffffff 8%, #e6e6fa 48%, #dda0dd 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -217,7 +217,7 @@ body {
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--celeste);
+  color: var(--lavender);
   font-weight: 700;
 }
 
@@ -252,14 +252,14 @@ body {
   padding: 0.75rem 0.85rem;
   border-radius: 14px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.35);
+  background: rgba(24, 18, 32, 0.35);
   color: inherit;
   cursor: pointer;
   font: inherit;
 }
 
 .attention-item:hover {
-  border-color: rgba(158, 234, 244, 0.32);
+  border-color: rgba(230, 230, 250, 0.32);
 }
 
 .attention-item strong,
@@ -337,7 +337,7 @@ body {
 
 .section-tab.active {
   color: var(--text);
-  border-bottom-color: var(--celeste);
+  border-bottom-color: var(--lavender);
 }
 
 .empty-panel {
@@ -368,8 +368,8 @@ body {
   border-radius: 18px;
   border: 1px solid var(--line);
   background:
-    linear-gradient(180deg, rgba(158, 234, 244, 0.08), transparent 42%),
-    rgba(8, 28, 44, 0.5);
+    linear-gradient(180deg, rgba(230, 230, 250, 0.08), transparent 42%),
+    rgba(24, 18, 32, 0.5);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -378,16 +378,16 @@ body {
 }
 
 .service-tile:hover {
-  border-color: rgba(158, 234, 244, 0.4);
+  border-color: rgba(230, 230, 250, 0.4);
   transform: translateY(-1px);
 }
 
 .service-tile.active {
-  border-color: rgba(158, 234, 244, 0.55);
+  border-color: rgba(230, 230, 250, 0.55);
   background:
-    linear-gradient(180deg, rgba(26, 77, 115, 0.45), transparent 55%),
-    rgba(10, 36, 56, 0.75);
-  box-shadow: inset 0 0 0 1px rgba(158, 234, 244, 0.2);
+    linear-gradient(180deg, rgba(221, 160, 221, 0.45), transparent 55%),
+    rgba(32, 24, 42, 0.75);
+  box-shadow: inset 0 0 0 1px rgba(230, 230, 250, 0.2);
 }
 
 .service-tile.fail {
@@ -441,7 +441,7 @@ body {
   padding: 1rem;
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.28);
+  background: rgba(24, 18, 32, 0.28);
 }
 
 .service-tab-panel-head {
@@ -560,7 +560,7 @@ body {
   padding: 1.1rem 1.15rem;
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.28);
+  background: rgba(24, 18, 32, 0.28);
   box-shadow: none;
 }
 
@@ -586,7 +586,7 @@ body {
 }
 
 .mesh-summary {
-  color: var(--celeste);
+  color: var(--lavender);
   font-size: 0.86rem;
 }
 
@@ -611,7 +611,7 @@ body {
   padding: 0.55rem 0.7rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(10, 32, 48, 0.55);
+  background: rgba(28, 22, 38, 0.55);
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -654,7 +654,7 @@ body {
   width: 100%;
   text-align: left;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.35);
+  background: rgba(24, 18, 32, 0.35);
   color: inherit;
   border-radius: 12px;
   padding: 0.65rem 0.8rem;
@@ -700,7 +700,7 @@ body {
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--celeste);
+  color: var(--lavender);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -789,7 +789,7 @@ body {
   margin-top: 0.25rem;
   padding: 0.55rem 0.65rem;
   border-radius: 10px;
-  background: rgba(8, 28, 44, 0.45);
+  background: rgba(24, 18, 32, 0.45);
   border: 1px solid var(--line);
   font-family: var(--font-mono);
   font-size: 0.78rem;
@@ -879,7 +879,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.35);
+  background: rgba(24, 18, 32, 0.35);
 }
 
 .target-group-item.ok {
@@ -955,7 +955,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.35);
+  background: rgba(24, 18, 32, 0.35);
 }
 
 .stable-task-title {
@@ -972,7 +972,7 @@ body {
   text-transform: uppercase;
   padding: 0.15rem 0.4rem;
   border-radius: 999px;
-  background: rgba(26, 77, 115, 0.18);
+  background: rgba(221, 160, 221, 0.18);
   color: #c5eef5;
 }
 
@@ -1092,7 +1092,7 @@ body {
 
 .topology-summary {
   font-size: 0.82rem;
-  color: var(--celeste);
+  color: var(--lavender);
 }
 
 .topology-flow {
@@ -1114,7 +1114,7 @@ body {
   padding: 0.65rem 0.75rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(8, 28, 44, 0.45);
+  background: rgba(24, 18, 32, 0.45);
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -1126,8 +1126,8 @@ body {
 }
 
 .topology-node.load-balancer {
-  border-color: rgba(158, 234, 244, 0.35);
-  box-shadow: inset 0 0 0 1px rgba(158, 234, 244, 0.12);
+  border-color: rgba(230, 230, 250, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(230, 230, 250, 0.12);
 }
 
 .topology-node.target-group {
@@ -1136,8 +1136,8 @@ body {
 }
 
 .topology-node.ecs {
-  border-color: rgba(26, 77, 115, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(26, 77, 115, 0.18);
+  border-color: rgba(221, 160, 221, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(221, 160, 221, 0.18);
 }
 
 .topology-node.database {
@@ -1248,7 +1248,7 @@ body {
 }
 
 .topology-edge-list span {
-  color: var(--celeste);
+  color: var(--lavender);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1314,8 +1314,8 @@ body {
 .dns-card {
   padding: 0.8rem 0.85rem;
   border-radius: 12px;
-  border: 1px solid rgba(26, 77, 115, 0.28);
-  background: rgba(8, 28, 44, 0.4);
+  border: 1px solid rgba(221, 160, 221, 0.28);
+  background: rgba(24, 18, 32, 0.4);
 }
 
 .dns-card header {
@@ -1331,7 +1331,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--celeste);
+  color: var(--lavender);
 }
 
 .lb-list {
@@ -1342,8 +1342,8 @@ body {
 .lb-card {
   padding: 0.8rem 0.85rem;
   border-radius: 12px;
-  border: 1px solid rgba(158, 234, 244, 0.28);
-  background: rgba(8, 28, 44, 0.4);
+  border: 1px solid rgba(230, 230, 250, 0.28);
+  background: rgba(24, 18, 32, 0.4);
 }
 
 .lb-card header {
@@ -1359,7 +1359,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--celeste);
+  color: var(--lavender);
 }
 
 .lb-state {

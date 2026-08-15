@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.8.3**):
+Everything this repo provides today (**v0.8.4**):
 
 ### Application health checks
 
@@ -468,7 +468,7 @@ The HTML report is built for **leadership scan, then drill-down**:
 - Service details: capacity, CPU, memory, release, traffic, HTTP health, endpoints, known-good versions, events
 - Target groups, load balancers, and Route 53 records listed once per cluster
 
-Built with **React + Vite** (`report-ui/`) — Picotte and Celeste blues, Fraunces / Figtree / IBM Plex Mono.
+Built with **React + Vite** (`report-ui/`) — plum `#DDA0DD` and lavender `#E6E6FA`, Fraunces / Figtree / IBM Plex Mono.
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 

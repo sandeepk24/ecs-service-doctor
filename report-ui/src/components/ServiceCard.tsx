@@ -11,13 +11,12 @@ import {
 } from "../utils";
 import { StatusBadge } from "./StatusBadge";
 import { StatusLight } from "./StatusLight";
-import { TopologyDiagram } from "./TopologyDiagram";
 import { LoadBalancerPanel } from "./LoadBalancerPanel";
 
 interface Props {
   item: ServiceResult;
-  expanded: boolean;
-  onToggle: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }
 
 interface TargetGroupCheck {
@@ -46,7 +45,7 @@ function TargetGroupSection({
   return (
     <div className="target-groups">
       <div className="target-groups-head">
-        <h4>Load balancer</h4>
+        <h4>Target groups</h4>
         {targetHealth?.attachment_summary && (
           <span className="target-groups-summary">{targetHealth.attachment_summary}</span>
         )}
@@ -169,114 +168,111 @@ function CheckRow({
   );
 }
 
-export function ServiceCard({ item, expanded, onToggle }: Props) {
+export function ServiceTile({ item, selected, onSelect }: Props) {
+  return (
+    <button
+      type="button"
+      className={`service-tile ${item.status.toLowerCase()}${selected ? " selected" : ""}`}
+      onClick={onSelect}
+    >
+      <div className="service-tile-top">
+        <StatusLight light={serviceLight(item)} />
+        <StatusBadge status={item.status} label={statusLabel(item.status)} />
+      </div>
+      <h3>{item.service}</h3>
+      {item.critical && <span className="critical-tag">Critical</span>}
+      <p className="service-snapshot">{serviceSnapshot(item)}</p>
+      <div className="service-tile-metrics">
+        <span>
+          <span className="mini-label">Capacity</span>
+          <strong>{taskCapacity(item)}</strong>
+        </span>
+        <span>
+          <span className="mini-label">App</span>
+          <strong>{httpLabel(item)}</strong>
+        </span>
+        <span>
+          <span className="mini-label">Traffic</span>
+          <strong>{trafficLabel(item)}</strong>
+        </span>
+      </div>
+    </button>
+  );
+}
+
+export function ServiceDetail({ item }: { item: ServiceResult }) {
   const checks = item.checks ?? {};
   const events = checks.recent_events?.events ?? [];
   const images = checks.task_definition?.container_images ?? [];
   const connectivity = checks.connectivity as Topology | undefined;
 
+  if (item.error) {
+    return <div className="service-error">{item.error}</div>;
+  }
+
   return (
-    <article className={`service-card ${item.status.toLowerCase()}${expanded ? " open" : ""}`}>
-      <button type="button" className="service-row" onClick={onToggle}>
-        <div className="service-identity">
-          <StatusLight light={serviceLight(item)} />
+    <div className="service-details panel">
+      <div className="meta-grid">
+        <div>
+          <span className="mini-label">Task definition</span>
+          <code>{shortTaskDefinition(item.task_definition)}</code>
+        </div>
+        {item.launch_type && (
           <div>
-            <h3>{item.service}</h3>
-            {item.critical && <span className="critical-tag">Critical</span>}
+            <span className="mini-label">Launch</span>
+            <strong>{item.launch_type}</strong>
           </div>
-        </div>
-        <StatusBadge status={item.status} label={statusLabel(item.status)} />
-        <div className="service-metric">
-          <span className="mini-label">Capacity</span>
-          <strong>{taskCapacity(item)}</strong>
-        </div>
-        <div className="service-metric">
-          <span className="mini-label">App</span>
-          <strong>{httpLabel(item)}</strong>
-        </div>
-        <div className="service-metric">
-          <span className="mini-label">Traffic</span>
-          <strong>{trafficLabel(item)}</strong>
-        </div>
-        <p className="service-snapshot">{serviceSnapshot(item)}</p>
-        <span className="expand-hint">{expanded ? "Hide details" : "Details"}</span>
-      </button>
+        )}
+      </div>
 
-      {expanded && (
-        <div className="service-details">
-          {item.error ? (
-            <div className="service-error">{item.error}</div>
-          ) : (
-            <>
-              <div className="meta-grid">
-                <div>
-                  <span className="mini-label">Task definition</span>
-                  <code>{shortTaskDefinition(item.task_definition)}</code>
-                </div>
-                {item.launch_type && (
-                  <div>
-                    <span className="mini-label">Launch</span>
-                    <strong>{item.launch_type}</strong>
-                  </div>
-                )}
-              </div>
+      <div className="checks">
+        <CheckRow
+          label="Capacity"
+          status={checks.task_counts?.status}
+          message={checks.task_counts?.message}
+        />
+        <CheckRow
+          label="Release"
+          status={checks.deployments?.status}
+          message={checks.deployments?.message}
+        />
+        <CheckRow
+          label="Traffic"
+          status={checks.target_group_health?.status}
+          message={checks.target_group_health?.message}
+        />
+        <CheckRow
+          label="App"
+          status={checks.http_health?.status}
+          message={checks.http_health?.message}
+        />
+      </div>
 
-              <div className="checks">
-                <CheckRow
-                  label="Capacity"
-                  status={checks.task_counts?.status}
-                  message={checks.task_counts?.message}
-                />
-                <CheckRow
-                  label="Release"
-                  status={checks.deployments?.status}
-                  message={checks.deployments?.message}
-                />
-                <CheckRow
-                  label="Traffic"
-                  status={checks.target_group_health?.status}
-                  message={checks.target_group_health?.message}
-                />
-                <CheckRow
-                  label="App"
-                  status={checks.http_health?.status}
-                  message={checks.http_health?.message}
-                />
-              </div>
+      <TargetGroupSection targetHealth={checks.target_group_health} />
+      <LoadBalancerPanel loadBalancers={connectivity?.load_balancers} />
+      <StableTasksSection stableTasks={checks.stable_tasks} />
 
-              <TargetGroupSection targetHealth={checks.target_group_health} />
-              <LoadBalancerPanel loadBalancers={connectivity?.load_balancers} />
-              <StableTasksSection stableTasks={checks.stable_tasks} />
-
-              {connectivity?.nodes?.length ? (
-                <TopologyDiagram topology={connectivity} />
-              ) : null}
-
-              {images.length > 0 && (
-                <div className="images">
-                  {images.map((image) => (
-                    <div key={image.container} className="image-row">
-                      <span className="mini-label">{image.container}</span>
-                      <code>{image.image}</code>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {events.length > 0 && (
-                <div className="events">
-                  <h4>Recent events</h4>
-                  <ul>
-                    {events.slice(0, 4).map((event, index) => (
-                      <li key={index}>{event.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
+      {images.length > 0 && (
+        <div className="images">
+          {images.map((image) => (
+            <div key={image.container} className="image-row">
+              <span className="mini-label">{image.container}</span>
+              <code>{image.image}</code>
+            </div>
+          ))}
         </div>
       )}
-    </article>
+
+      {events.length > 0 && (
+        <div className="events">
+          <h4>Recent events</h4>
+          <ul>
+            {events.slice(0, 4).map((event, index) => (
+              <li key={index}>{event.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }

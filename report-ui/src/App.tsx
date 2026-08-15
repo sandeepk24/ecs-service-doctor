@@ -6,28 +6,48 @@ import {
   overallStatus,
   sortBySeverity,
   statusLabel,
+  serviceLight,
 } from "./utils";
+import type { ServiceMesh, ServiceResult } from "./types";
 import { StatusBadge } from "./components/StatusBadge";
+import { StatusLight } from "./components/StatusLight";
 import { SummaryGrid } from "./components/SummaryGrid";
 import { ExecutiveBrief } from "./components/ExecutiveBrief";
-import { ServiceCard } from "./components/ServiceCard";
+import { ServiceDetail, ServiceTile } from "./components/ServiceCard";
 import { ServiceMeshMap } from "./components/ServiceMeshMap";
+
+function serviceKey(item: ServiceResult) {
+  return `${item.cluster}::${item.service}`;
+}
+
+function meshForCluster(mesh: ServiceMesh | undefined, cluster: string): ServiceMesh | null {
+  if (!mesh?.nodes?.length) return null;
+  const nodes = mesh.nodes.filter((node) => node.cluster === cluster);
+  if (!nodes.length) return null;
+  const ids = new Set(nodes.map((node) => node.id));
+  return {
+    summary: mesh.summary,
+    nodes,
+    edges: (mesh.edges ?? []).filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
+  };
+}
 
 export default function App() {
   const report = loadReport();
   const clusters = groupByCluster(report.results);
   const overall = overallStatus(report);
-  const [openKey, setOpenKey] = useState<string | null>(null);
 
-  const firstIssue = useMemo(() => {
+  const defaultKey = useMemo(() => {
     const issue = sortBySeverity(report.results).find((item) => item.status !== "PASS");
-    return issue ? `${issue.cluster}::${issue.service}` : null;
+    return issue ? serviceKey(issue) : report.results[0] ? serviceKey(report.results[0]) : "";
   }, [report.results]);
 
+  const [selectedKey, setSelectedKey] = useState(defaultKey);
+
   const selectService = (key: string) => {
-    setOpenKey(key);
+    setSelectedKey(key);
     window.requestAnimationFrame(() => {
-      document.getElementById(`svc-${key}`)?.scrollIntoView({
+      document.getElementById(`cluster-${key.split("::")[0]}`)?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
@@ -77,50 +97,84 @@ export default function App() {
 
         <SummaryGrid summary={report.summary} />
         <ExecutiveBrief report={report} onSelect={selectService} />
-        {report.mesh?.nodes?.length ? (
-          <ServiceMeshMap mesh={report.mesh} onSelect={selectService} />
-        ) : null}
 
         {report.results.length === 0 ? (
           <section className="empty">No services were checked.</section>
         ) : (
-          Array.from(clusters.entries()).map(([cluster, services]) => (
-            <section key={cluster} className="cluster-panel">
-              <div className="cluster-head">
-                <h2>{cluster}</h2>
-                <span>{services.length} services · click a row for details</span>
-              </div>
-              <div className="fleet-legend">
-                <span>Service</span>
-                <span>Status</span>
-                <span>Capacity</span>
-                <span>App</span>
-                <span>Traffic</span>
-                <span>Snapshot</span>
-              </div>
-              <div className="service-grid">
-                {sortBySeverity(services).map((service) => {
-                  const key = `${cluster}::${service.service}`;
-                  return (
-                    <div id={`svc-${key}`} key={key}>
-                      <ServiceCard
-                        item={service}
-                        expanded={openKey === key || (openKey === null && firstIssue === key)}
-                        onToggle={() =>
-                          setOpenKey((current) => (current === key ? "" : key))
-                        }
+          Array.from(clusters.entries()).map(([cluster, services]) => {
+            const ordered = sortBySeverity(services);
+            const selected =
+              ordered.find((item) => serviceKey(item) === selectedKey) ?? ordered[0];
+            const clusterMesh = meshForCluster(report.mesh, cluster);
+
+            return (
+              <section
+                key={cluster}
+                id={`cluster-${cluster}`}
+                className="cluster-panel"
+              >
+                <div className="cluster-head">
+                  <h2>{cluster}</h2>
+                  <span>{services.length} services</span>
+                </div>
+
+                <div className="service-tabs" role="tablist" aria-label={`${cluster} services`}>
+                  {ordered.map((item) => {
+                    const key = serviceKey(item);
+                    const active = selected && serviceKey(selected) === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        className={`service-tab ${item.status.toLowerCase()}${active ? " active" : ""}`}
+                        onClick={() => setSelectedKey(key)}
+                      >
+                        <StatusLight light={serviceLight(item)} />
+                        <span>{item.service}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="service-tiles">
+                  {ordered.map((item) => {
+                    const key = serviceKey(item);
+                    return (
+                      <ServiceTile
+                        key={key}
+                        item={item}
+                        selected={selected ? serviceKey(selected) === key : false}
+                        onSelect={() => setSelectedKey(key)}
+                      />
+                    );
+                  })}
+                </div>
+
+                {selected && (
+                  <div className="service-tab-panel" role="tabpanel">
+                    <div className="service-tab-panel-head">
+                      <h3>{selected.service}</h3>
+                      <StatusBadge
+                        status={selected.status}
+                        label={statusLabel(selected.status)}
                       />
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))
+                    <ServiceDetail item={selected} />
+                  </div>
+                )}
+
+                {clusterMesh && (
+                  <ServiceMeshMap mesh={clusterMesh} onSelect={selectService} />
+                )}
+              </section>
+            );
+          })
         )}
 
         <footer className="footer">
-          ECS Health Report v{report.version} · One-page snapshot — expand a service
-          for engineering detail
+          ECS Health Report v{report.version} · Select a service tab for details
         </footer>
       </main>
     </div>

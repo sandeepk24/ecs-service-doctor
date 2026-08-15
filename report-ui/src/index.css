@@ -3,15 +3,15 @@
   --font-body: Calibri, Tahoma, "Segoe UI", sans-serif;
   --font-mono: Consolas, "Courier New", monospace;
 
-  --bg-0: #07111f;
-  --bg-1: #0c1c30;
-  --bg-2: #132844;
-  --card: #16324f;
-  --card-border: rgba(148, 188, 222, 0.2);
-  --text: #eef4fb;
-  --muted: #9db4c9;
-  --line: rgba(148, 188, 222, 0.16);
-  --highlight: #7eb3d9;
+  --bg-0: #021226;
+  --bg-1: #031830;
+  --bg-2: #041e42;
+  --card: #041e42;
+  --card-border: rgba(130, 170, 210, 0.22);
+  --text: #eef4fa;
+  --muted: #94b0c8;
+  --line: rgba(130, 170, 210, 0.16);
+  --highlight: #6aa0cc;
 
   --healthy: #3dd68c;
   --healthy-bg: rgba(61, 214, 140, 0.16);
@@ -53,8 +53,8 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   background:
-    radial-gradient(ellipse at 18% -8%, rgba(90, 140, 190, 0.22), transparent 44%),
-    linear-gradient(180deg, #1a3554 0%, #10263e 48%, #0a1828 100%);
+    radial-gradient(ellipse at 18% -8%, rgba(60, 120, 180, 0.22), transparent 44%),
+    linear-gradient(180deg, #0a3a68 0%, #041e42 48%, #021226 100%);
 }
 
 .page {
@@ -1665,9 +1665,9 @@ body {
 
 .ops-service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   justify-items: center;
-  gap: 0.85rem 0.55rem;
+  gap: 0.85rem 0.7rem;
   margin-bottom: 1rem;
 }
 
@@ -1677,10 +1677,10 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  width: min(100%, 176px);
+  width: min(100%, 184px);
   aspect-ratio: 1;
-  padding: 14% 11% 12%;
-  border-radius: 50%;
+  padding: 0.7rem 0.65rem 0.6rem;
+  border-radius: 18px;
   border: 1px solid rgba(190, 220, 245, 0.28);
   color: inherit;
   font: inherit;
@@ -1688,9 +1688,9 @@ body {
   text-align: center;
   background:
     radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.42), transparent 34%),
-    radial-gradient(circle at 70% 18%, rgba(126, 179, 217, 0.18), transparent 32%),
+    radial-gradient(circle at 70% 18%, rgba(106, 160, 204, 0.2), transparent 32%),
     radial-gradient(circle at 50% 118%, rgba(0, 0, 0, 0.55), transparent 52%),
-    linear-gradient(165deg, #2a5274 0%, #16324f 42%, #0c2036 100%);
+    linear-gradient(165deg, #0a3a68 0%, #041e42 42%, #021226 100%);
   box-shadow:
     inset 0 3px 6px rgba(255, 255, 255, 0.28),
     inset 0 -14px 22px rgba(0, 8, 18, 0.42),
@@ -1702,7 +1702,7 @@ body {
   box-shadow:
     inset 0 3px 6px rgba(255, 255, 255, 0.3),
     inset 0 -14px 22px rgba(0, 8, 18, 0.4),
-    0 0 0 3px rgba(126, 179, 217, 0.55),
+    0 0 0 3px rgba(106, 160, 204, 0.55),
     0 16px 22px rgba(4, 10, 20, 0.42);
 }
 
@@ -1743,8 +1743,8 @@ body {
   overflow: visible;
   white-space: normal;
   overflow-wrap: anywhere;
-  line-height: 1.12;
-  font-size: 0.78rem;
+  line-height: 1.15;
+  font-size: 0.84rem;
 }
 
 .ops-service-card .status-badge {
@@ -1863,7 +1863,7 @@ body {
   }
 
   .ops-service-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
   }
 }
 

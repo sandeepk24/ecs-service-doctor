@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, **task restarts in the last 12 hours (with the exact AWS stop reason)**, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
 
 ---
 
@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.9.1**):
+Everything this repo provides today (**v0.9.9**):
 
 ### Application health checks
 
@@ -39,17 +39,23 @@ Everything this repo provides today (**v0.9.1**):
 - **Endpoints** — host-header routes and matching Route 53 names are probed with that target-group path/matcher
 - **Green / red status lights** — green when the app health check passes, red when it fails
 - **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
-- **Container image** — image URI/tag from the live task definition (what is actually deployed)
+- **Task restarts** — how many times a service started replacement tasks in the last 12 hours, plus the **exact ECS `stoppedReason`**, container exit code, and container reason
+- **CloudWatch logs** — recent `awslogs` lines from each service’s log group
+- **Container image** — full image URI/tag from the live task definition (what is actually deployed)
+- **Launch details** — Fargate/EC2, platform version, reserved CPU/memory, network mode
 - **Pass / warn / fail** — per-check and per-service status with plain-language summaries
 
 ### HTML Service Health Report
 
 Shareable, self-contained HTML (no external assets after export):
 
-- **Executive snapshot** — one sentence plus compact fleet counts in the header
+- **Glass ops dashboard** — midnight navy / slate teal, cyan 3D pills, Amazon ECS logo
+- **KPI strip and overall health bar** — services, tasks, targets, deployments
 - **Needs attention** — only the services that are not healthy, with a jump-to-service link
-- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, and **Route 53** (not repeated on every service)
-- **Service picker** — green/red lights, then a short detail panel: capacity, CPU, memory, release, traffic, app, endpoints, known-good versions, events
+- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, **Route 53**, and **Logs**
+- **Service tiles** — one row per cluster; full service names; status, tasks/targets; **Restarted N×** when tasks restarted in the last 12 hours
+- **Service detail** — full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, app health, endpoints, known-good versions, events
+- **Logs tab** — pick a service; CloudWatch lines plus **why it restarted** (exact stop reason, container reason, exit code)
 - **Target groups tab** — every group in the cluster once, with service, port, health-check path/matcher, and healthy/unhealthy counts
 - **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
 - **Route 53 tab** — DNS records that alias or CNAME to cluster ALBs/NLBs, plus names that match listener host headers (CloudFront and CNAME chains included)
@@ -265,6 +271,8 @@ Application and infrastructure signals together:
 | **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
 | **Container image** | Which image/tag is actually deployed (from the task definition) |
 | **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
+| **Restarts** | Stopped tasks in the last 12 hours — count, `stoppedReason`, container reason, exit code |
+| **Logs** | Recent CloudWatch `awslogs` lines for the running task definition |
 | **Stable tasks** | Last 3 task definitions that ran stably — with image tag and a copy-paste rollback command |
 | **HTTP** | Application URL matches the target-group health-check path and success codes |
 | **Endpoints** | Host-header rules and matching Route 53 names get a separate HTTP check per hostname |
@@ -377,7 +385,27 @@ If CloudWatch has no datapoints yet, reserved size still shows and the service i
 
 Set `include_cpu_memory` to `false` to skip this check. Requires `cloudwatch:GetMetricData`.
 
-The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group (`logs:FilterLogEvents`). Set `include_logs` to `false` to skip.
+---
+
+## Logs and restarts
+
+The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group (`logs:FilterLogEvents`). When tasks restarted in the lookback window, it also lists the **exact ECS stop reason** from stopped tasks (`stoppedReason`, container reason, exit code) via `ecs:ListTasks` and `ecs:DescribeTasks`.
+
+Service tiles show **Restarted N×** for that window. Hover the chip for the latest reason; open **Logs** for every stop.
+
+```json
+{
+  "checks": {
+    "include_logs": true,
+    "log_lookback_minutes": 30,
+    "log_line_limit": 40,
+    "include_restarts": true,
+    "restart_lookback_hours": 12
+  }
+}
+```
+
+Set `include_logs` or `include_restarts` to `false` to skip. Restarts do not fail the service health score by themselves.
 
 ---
 
@@ -464,13 +492,14 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 
 The HTML report is built for **leadership scan, then drill-down**:
 
-- One-sentence executive snapshot (healthy vs needs attention) and compact fleet counts
-- Attention list of only the services that are not healthy
-- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**, **Route 53**
-- Service details: capacity, CPU, memory, release, traffic, HTTP health, endpoints, known-good versions, events
+- KPI strip, overall health bar, and attention list of services that are not healthy
+- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**, **Route 53**, **Logs**
+- Service tiles in **one row**, with full names and a **Restarted N×** chip when tasks restarted in the last 12 hours
+- Service details: full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, known-good versions, events
+- **Logs** tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
 - Target groups, load balancers, and Route 53 records listed once per cluster
 
-Built with **React + Vite** (`report-ui/`) — glossy `#004170` ops dashboard, **Tahoma** headings and **Calibri** body text.
+Built with **React + Vite** (`report-ui/`): teal-glass dashboard, cyan 3D pills, Amazon ECS logo, **Palatino** titles, **Calibri** / **Tahoma** body text.
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
 

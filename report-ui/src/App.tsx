@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatTimestamp,
   groupByCluster,
@@ -42,8 +42,22 @@ type ClusterSection =
   | "backends"
   | "logs";
 
+type ThemeMode = "night" | "day";
+
+const THEME_KEY = "ecs-doctor-theme";
+
 function serviceKey(item: ServiceResult) {
   return `${item.cluster}::${item.service}`;
+}
+
+function readStoredTheme(): ThemeMode {
+  try {
+    const value = window.localStorage.getItem(THEME_KEY);
+    if (value === "day" || value === "night") return value;
+  } catch {
+    /* ignore */
+  }
+  return "night";
 }
 
 export default function App() {
@@ -67,6 +81,16 @@ export default function App() {
   const [sectionByCluster, setSectionByCluster] = useState<
     Record<string, ClusterSection>
   >({});
+  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      window.localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   const selectService = (key: string) => {
     const cluster = key.split("::")[0];
@@ -86,6 +110,7 @@ export default function App() {
     <div className="page">
       <div className="bg-glow bg-glow-a" />
       <div className="bg-glow bg-glow-b" />
+      <div className="bg-glow bg-glow-c" />
       <main className="shell">
         <header className="ops-header hero">
           <div className="ops-brand">
@@ -100,6 +125,28 @@ export default function App() {
             </div>
           </div>
           <div className="ops-header-side">
+            <div
+              className="theme-toggle"
+              role="group"
+              aria-label="Color theme"
+            >
+              <button
+                type="button"
+                className={theme === "day" ? "active" : ""}
+                aria-pressed={theme === "day"}
+                onClick={() => setTheme("day")}
+              >
+                Day
+              </button>
+              <button
+                type="button"
+                className={theme === "night" ? "active" : ""}
+                aria-pressed={theme === "night"}
+                onClick={() => setTheme("night")}
+              >
+                Night
+              </button>
+            </div>
             <span className="ops-env gloss-pill">
               {environment ? `${environment} · ` : ""}
               {report.region}

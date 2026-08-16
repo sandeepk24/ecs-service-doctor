@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.10.0**):
+Everything this repo provides today (**v0.10.1**):
 
 ### Application health checks
 
@@ -49,7 +49,7 @@ Everything this repo provides today (**v0.10.0**):
 
 Shareable, self-contained HTML (no external assets after export):
 
-- **Glass ops dashboard** — midnight navy / slate teal, cyan 3D pills, Amazon ECS logo
+- **Glass ops dashboard** — midnight navy / slate teal by default, with a **Day / Night** toggle for pastel frosted-glass day mode
 - **KPI strip and overall health bar** — services, tasks, targets, deployments
 - **Needs attention** — only the services that are not healthy, with a jump-to-service link
 - **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, **Route 53**, **Backends**, and **Logs**

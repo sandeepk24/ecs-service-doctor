@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ECS Service Health Report</title>
+    <script>
+      try {
+        var t = localStorage.getItem("ecs-doctor-theme");
+        if (t === "day" || t === "night") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    </script>
     <script id="ecs-report-data" type="application/json">__ECS_REPORT_JSON__</script>
   </head>
   <body>

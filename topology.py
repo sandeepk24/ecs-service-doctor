@@ -14,11 +14,31 @@ NODE_RDS = "rds"
 NODE_REDIS = "redis"
 NODE_DOCDB = "docdb"
 NODE_DYNAMODB = "dynamodb"
+NODE_BEDROCK = "bedrock"
+NODE_S3 = "s3"
+NODE_SQS = "sqs"
+NODE_SNS = "sns"
+NODE_OPENSEARCH = "opensearch"
+NODE_MSK = "msk"
 NODE_CLOUD_MAP = "cloud_map"
 NODE_ECR = "ecr"
 NODE_INTERNET = "internet"
 NODE_GENERIC = "backend"
 NODE_TARGET_GROUP = "target_group"
+
+BACKEND_NODE_TYPES = {
+    NODE_RDS,
+    NODE_REDIS,
+    NODE_DOCDB,
+    NODE_DYNAMODB,
+    NODE_BEDROCK,
+    NODE_S3,
+    NODE_SQS,
+    NODE_SNS,
+    NODE_OPENSEARCH,
+    NODE_MSK,
+    NODE_GENERIC,
+}
 
 DB_HOST_KEYS = {
     "DATABASE_URL",
@@ -35,15 +55,95 @@ DB_HOST_KEYS = {
     "REDIS_HOST",
     "ELASTICACHE_ENDPOINT",
     "DYNAMODB_ENDPOINT",
-    "AWS_ENDPOINT_URL",
+    "DYNAMODB_TABLE",
+    "TABLE_NAME",
+    "BEDROCK_ENDPOINT",
+    "BEDROCK_MODEL_ID",
+    "BEDROCK_MODEL",
+    "AWS_BEDROCK_MODEL_ID",
+    "S3_BUCKET",
+    "S3_BUCKET_NAME",
+    "BUCKET_NAME",
+    "SQS_QUEUE_URL",
+    "QUEUE_URL",
+    "SNS_TOPIC_ARN",
+}
+
+NAME_HINTS = (
+    "DATABASE",
+    "POSTGRES",
+    "MYSQL",
+    "MARIA",
+    "MONGO",
+    "REDIS",
+    "ELASTICACHE",
+    "DOCDB",
+    "AURORA",
+    "RDS_",
+    "DB_",
+    "DYNAMO",
+    "TABLE_NAME",
+    "BEDROCK",
+    "CLAUDE",
+    "TITAN",
+    "NOVA_",
+    "FOUNDATION_MODEL",
+    "S3_",
+    "BUCKET",
+    "SQS",
+    "QUEUE_URL",
+    "SNS_TOPIC",
+    "OPENSEARCH",
+    "ELASTICSEARCH",
+    "KAFKA",
+    "MSK_",
+    "BROKER",
+    "REDSHIFT",
+)
+
+SKIP_ENV_NAMES = {
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_EXECUTION_ENV",
+    "PATH",
+    "HOME",
+    "LANG",
+    "HOSTNAME",
 }
 
 BACKEND_PATTERNS: List[Tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\.rds\.amazonaws\.com", re.I), NODE_RDS, "RDS"),
     (re.compile(r"\.cache\.amazonaws\.com", re.I), NODE_REDIS, "ElastiCache"),
     (re.compile(r"\.docdb\.amazonaws\.com", re.I), NODE_DOCDB, "DocumentDB"),
+    (re.compile(r"bedrock-runtime\.|bedrock\.[a-z0-9-]+\.amazonaws", re.I), NODE_BEDROCK, "Bedrock"),
+    (re.compile(r"amazon\.bedrock|anthropic\.claude|amazon\.(titan|nova)|meta\.llama|cohere\.|mistral\.", re.I), NODE_BEDROCK, "Bedrock"),
     (re.compile(r"\.dynamodb\.", re.I), NODE_DYNAMODB, "DynamoDB"),
-    (re.compile(r"\.amazonaws\.com", re.I), NODE_GENERIC, "AWS service"),
+    (re.compile(r"\.docdb-elastic\.|\.docdb\.", re.I), NODE_DOCDB, "DocumentDB"),
+    (re.compile(r"s3[.-][a-z0-9-]+\.amazonaws\.com|^s3://", re.I), NODE_S3, "S3"),
+    (re.compile(r"\.sqs\.", re.I), NODE_SQS, "SQS"),
+    (re.compile(r"\.sns\.", re.I), NODE_SNS, "SNS"),
+    (re.compile(r"\.es\.amazonaws\.com|\.aoss\.amazonaws|\.opensearch\.", re.I), NODE_OPENSEARCH, "OpenSearch"),
+    (re.compile(r"kafka\.[a-z0-9-]+\.amazonaws|\.amazonaws\.com:909", re.I), NODE_MSK, "MSK"),
+    (re.compile(r"^postgres(ql)?://|^mysql://|^mariadb://", re.I), NODE_RDS, "Database"),
+    (re.compile(r"^mongodb(\+srv)?://", re.I), NODE_DOCDB, "Mongo"),
+    (re.compile(r"^rediss?://", re.I), NODE_REDIS, "Redis"),
+]
+
+ARN_PATTERNS: List[Tuple[re.Pattern[str], str, str]] = [
+    (re.compile(r"arn:aws:dynamodb:[^:]+:[^:]+:table/([^/\s]+)", re.I), NODE_DYNAMODB, "DynamoDB"),
+    (re.compile(r"arn:aws:rds:[^:]+:[^:]+:db:([^\s]+)", re.I), NODE_RDS, "RDS"),
+    (re.compile(r"arn:aws:rds:[^:]+:[^:]+:cluster:([^\s]+)", re.I), NODE_RDS, "Aurora"),
+    (re.compile(r"arn:aws:s3:::([^\s/]+)", re.I), NODE_S3, "S3"),
+    (re.compile(r"arn:aws:sqs:[^:]+:[^:]+:([^\s]+)", re.I), NODE_SQS, "SQS"),
+    (re.compile(r"arn:aws:sns:[^:]+:[^:]+:([^\s]+)", re.I), NODE_SNS, "SNS"),
+    (re.compile(r"arn:aws:bedrock:[^:]+:[^:]*:(foundation-model|inference-profile)/([^\s]+)", re.I), NODE_BEDROCK, "Bedrock"),
+    (re.compile(r"arn:aws:es:[^:]+:[^:]+:domain/([^\s]+)", re.I), NODE_OPENSEARCH, "OpenSearch"),
+    (re.compile(r"arn:aws:kafka:[^:]+:[^:]+:cluster/([^/\s]+)", re.I), NODE_MSK, "MSK"),
+    (re.compile(r"arn:aws:elasticache:", re.I), NODE_REDIS, "ElastiCache"),
+    (re.compile(r"arn:aws:docdb:", re.I), NODE_DOCDB, "DocumentDB"),
 ]
 
 
@@ -518,22 +618,139 @@ def discover_service_registries(sd_client, service: Dict[str, Any]) -> List[Dict
     return discovered
 
 
-def _classify_backend_value(value: str) -> Optional[Dict[str, str]]:
-    if not value:
+def _host_from_value(value: str) -> Tuple[str, Optional[int]]:
+    text = (value or "").strip()
+    if not text:
+        return "", None
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    text = text.split("/")[0].split("?")[0]
+    if "@" in text:
+        text = text.rsplit("@", 1)[-1]
+    port: Optional[int] = None
+    if text.count(":") == 1:
+        host, maybe_port = text.split(":")
+        if maybe_port.isdigit():
+            return host, int(maybe_port)
+    return text, port
+
+
+def _classify_arn(value: str) -> Optional[Dict[str, Any]]:
+    for pattern, node_type, label_prefix in ARN_PATTERNS:
+        match = pattern.search(value)
+        if not match:
+            continue
+        ident = match.group(match.lastindex) if match.lastindex else value[:48]
+        return {
+            "type": node_type,
+            "label": f"{label_prefix}: {ident}",
+            "identifier": ident,
+            "arn": value[:200],
+            "source": "arn",
+        }
+    return None
+
+
+def _classify_backend_value(value: str) -> Optional[Dict[str, Any]]:
+    if not value or value.strip().lower() in {"true", "false", "yes", "no"}:
         return None
+    if value.startswith("arn:"):
+        return _classify_arn(value)
 
     for pattern, node_type, label_prefix in BACKEND_PATTERNS:
         if pattern.search(value):
-            host = value.split("://")[-1].split("/")[0].split(":")[0]
-            short = host.split(".")[0] if "." in host else host[:32]
-            return {
+            host, port = _host_from_value(value)
+            short = host.split(".")[0] if "." in host else (host or value)[:48]
+            payload: Dict[str, Any] = {
                 "type": node_type,
                 "label": f"{label_prefix}: {short}",
                 "host": host,
                 "source": "inferred",
             }
-
+            if port:
+                payload["port"] = port
+            if node_type == NODE_RDS and host:
+                payload["identifier"] = host.split(".")[0]
+                payload["aurora_cluster"] = ".cluster-" in host.lower()
+            if node_type == NODE_REDIS and host:
+                payload["identifier"] = host.split(".")[0]
+            if node_type == NODE_BEDROCK and "." in value and "amazonaws" not in value.lower():
+                payload["identifier"] = value.split("/")[-1][:120]
+            if node_type == NODE_S3:
+                if value.lower().startswith("s3://"):
+                    payload["identifier"] = value[5:].split("/")[0]
+                elif host:
+                    payload["identifier"] = host.split(".")[0]
+            return payload
     return None
+
+
+def _name_hinted(name: str) -> bool:
+    upper = name.upper()
+    if name in DB_HOST_KEYS:
+        return True
+    return any(token in upper for token in NAME_HINTS)
+
+
+def _backend_from_env(name: str, value: str) -> Optional[Dict[str, Any]]:
+    if not name or name.upper() in SKIP_ENV_NAMES:
+        return None
+    classified = _classify_backend_value(value)
+    if classified:
+        classified["env"] = name
+        return classified
+    if not _name_hinted(name) or not value:
+        return None
+    upper = name.upper()
+    host, port = _host_from_value(value)
+    backend: Dict[str, Any] = {
+        "label": f"{name}",
+        "host": host or value[:80],
+        "source": "env",
+        "env": name,
+    }
+    if port:
+        backend["port"] = port
+    if "BEDROCK" in upper or "CLAUDE" in upper or "TITAN" in upper:
+        backend["type"] = NODE_BEDROCK
+        backend["identifier"] = value[:120]
+        backend["label"] = f"Bedrock: {value[:48]}"
+    elif "DYNAMO" in upper or upper.endswith("_TABLE") or upper == "TABLE_NAME":
+        backend["type"] = NODE_DYNAMODB
+        backend["identifier"] = value[:255]
+        backend["label"] = f"DynamoDB: {value[:48]}"
+    elif "BUCKET" in upper or upper.startswith("S3_"):
+        backend["type"] = NODE_S3
+        backend["identifier"] = value.replace("s3://", "").split("/")[0]
+        backend["label"] = f"S3: {backend['identifier'][:48]}"
+    elif "SQS" in upper or "QUEUE" in upper:
+        backend["type"] = NODE_SQS
+        backend["identifier"] = value[:200]
+        backend["label"] = f"SQS: {name}"
+    elif "SNS" in upper or "TOPIC" in upper:
+        backend["type"] = NODE_SNS
+        backend["identifier"] = value[:200]
+        backend["label"] = f"SNS: {name}"
+    elif any(token in upper for token in ("REDIS", "ELASTICACHE", "CACHE")):
+        backend["type"] = NODE_REDIS
+        backend["identifier"] = (host or value).split(".")[0]
+        backend["label"] = f"ElastiCache: {backend['identifier']}"
+    elif any(token in upper for token in ("OPENSEARCH", "ELASTICSEARCH")):
+        backend["type"] = NODE_OPENSEARCH
+        backend["identifier"] = (host or value).split(".")[0]
+        backend["label"] = f"OpenSearch: {backend['identifier']}"
+    elif "KAFKA" in upper or "MSK" in upper:
+        backend["type"] = NODE_MSK
+        backend["label"] = f"MSK: {name}"
+    else:
+        backend["type"] = NODE_RDS if any(
+            token in upper for token in ("DB", "DATABASE", "POSTGRES", "MYSQL", "RDS", "AURORA")
+        ) else NODE_GENERIC
+        if host and ".rds." in host:
+            backend["type"] = NODE_RDS
+            backend["identifier"] = host.split(".")[0]
+        backend["label"] = f"{backend['type'].upper()}: {name}"
+    return backend
 
 
 def infer_backends_from_task_definition(
@@ -542,40 +759,45 @@ def infer_backends_from_task_definition(
     backends: List[Dict[str, Any]] = []
     seen: Set[str] = set()
 
-    for container in task_definition.get("containerDefinitions", []):
+    def add(backend: Optional[Dict[str, Any]]) -> None:
+        if not backend:
+            return
+        key = (
+            backend.get("arn")
+            or backend.get("identifier")
+            or backend.get("host")
+            or backend.get("label")
+        )
+        if not key or key in seen:
+            return
+        seen.add(str(key))
+        backends.append(backend)
+
+    for container in task_definition.get("containerDefinitions", []) if task_definition else []:
         for env in container.get("environment", []):
-            name = env.get("name", "")
-            value = env.get("value", "")
-            if name in DB_HOST_KEYS or any(
-                key in name.upper() for key in ("DB_", "DATABASE", "REDIS", "POSTGRES", "MYSQL")
-            ):
-                backend = _classify_backend_value(value)
-                if not backend:
-                    backend = {
-                        "type": NODE_GENERIC,
-                        "label": f"{name} (inferred)",
-                        "host": value[:64],
-                        "source": "env",
-                    }
-                key = backend.get("host") or backend["label"]
-                if key not in seen:
-                    seen.add(key)
-                    backends.append(backend)
+            add(_backend_from_env(env.get("name", ""), env.get("value", "")))
 
         for secret in container.get("secrets", []):
             secret_name = secret.get("name", "")
-            if any(token in secret_name.upper() for token in ("DB", "DATABASE", "RDS", "REDIS")):
-                label = f"{secret_name} (secret)"
-                if label not in seen:
-                    seen.add(label)
-                    backends.append(
-                        {
-                            "type": NODE_GENERIC,
-                            "label": label,
-                            "host": secret.get("valueFrom", "")[:80],
-                            "source": "secret",
-                        }
-                    )
+            value_from = str(secret.get("valueFrom") or "")
+            classified = _classify_arn(value_from) if value_from.startswith("arn:") else None
+            if classified:
+                classified["env"] = secret_name
+                classified["source"] = "secret"
+                add(classified)
+                continue
+            if not _name_hinted(secret_name):
+                continue
+            add(
+                {
+                    "type": NODE_GENERIC,
+                    "label": f"{secret_name} (secret)",
+                    "host": value_from[:120],
+                    "source": "secret",
+                    "env": secret_name,
+                    "probe": "skip",
+                }
+            )
 
     return backends
 
@@ -829,6 +1051,7 @@ def build_topology(
         "http_hosts": http_hosts,
         "dns_records": dns_records,
         "load_balancers": load_balancers,
+        "backends": backends,
         "mermaid": build_mermaid(nodes, edges),
     }
 
@@ -846,6 +1069,12 @@ def build_mermaid(nodes: List[Dict[str, Any]], edges: List[Dict[str, str]]) -> s
         NODE_REDIS: ("[(", ")]"),
         NODE_DOCDB: ("[(", ")]"),
         NODE_DYNAMODB: ("[(", ")]"),
+        NODE_BEDROCK: ("[[", "]]"),
+        NODE_S3: ("[(", ")]"),
+        NODE_SQS: ("[", "]"),
+        NODE_SNS: ("[", "]"),
+        NODE_OPENSEARCH: ("[(", ")]"),
+        NODE_MSK: ("[(", ")]"),
         NODE_CLOUD_MAP: ("{{", "}}"),
         NODE_ECR: (">", "]"),
         NODE_INTERNET: ("((", "))"),

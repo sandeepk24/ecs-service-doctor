@@ -27,6 +27,10 @@ import {
   collectClusterDnsRecords,
   Route53Panel,
 } from "./components/Route53Panel";
+import {
+  collectClusterBackends,
+  BackendsPanel,
+} from "./components/BackendsPanel";
 import { LogsPanel } from "./components/LogsPanel";
 import { EcsLogo } from "./components/EcsLogo";
 
@@ -35,6 +39,7 @@ type ClusterSection =
   | "target-groups"
   | "load-balancers"
   | "route-53"
+  | "backends"
   | "logs";
 
 function serviceKey(item: ServiceResult) {
@@ -130,6 +135,7 @@ export default function App() {
             const targetGroups = collectClusterTargetGroups(services);
             const loadBalancers = collectClusterLoadBalancers(services);
             const dnsRecords = collectClusterDnsRecords(services);
+            const backends = collectClusterBackends(services);
 
             return (
               <section
@@ -150,6 +156,7 @@ export default function App() {
                   {(
                     [
                       ["services", "Services", services.length],
+                      ["backends", "Backends", backends.length],
                       ["target-groups", "Target groups", targetGroups.length],
                       ["load-balancers", "Load balancers", loadBalancers.length],
                       ["route-53", "Route 53", dnsRecords.length],
@@ -228,6 +235,10 @@ export default function App() {
 
                 {section === "route-53" && (
                   <Route53Panel records={dnsRecords} scan={report.route53} />
+                )}
+
+                {section === "backends" && (
+                  <BackendsPanel backends={backends} />
                 )}
 
                 {section === "logs" && (

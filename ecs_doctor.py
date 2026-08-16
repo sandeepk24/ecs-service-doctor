@@ -17,6 +17,7 @@ Checks:
 - load balancer target group health
 - recent stable task definitions for rollback
 - HTTP endpoint health using ALB target-group path/matcher (and notifications)
+- inferred backends (RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, and more)
 - Slack, Microsoft Teams, webhook, and SNS alerts
 - continuous monitoring with --interval
 
@@ -56,11 +57,12 @@ from topology import (
     collect_peer_hints,
     discover_connectivity,
     empty_route53_catalog,
+    infer_backends_from_task_definition,
     route53_report_summary,
 )
 
 
-VERSION = "0.9.9"
+VERSION = "0.10.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -1088,6 +1090,242 @@ def evaluate_recent_stops(
     }
 
 
+RDS_BAD_STATUSES = {
+    "stopped",
+    "stopping",
+    "failed",
+    "inaccessible-encryption-credentials",
+    "incompatible-parameters",
+    "incompatible-restore",
+    "storage-full",
+}
+RDS_OK_STATUSES = {"available", "backing-up", "modifying", "storage-optimization"}
+
+
+def _client_error_code(exc: ClientError) -> str:
+    return str((exc.response or {}).get("Error", {}).get("Code") or "")
+
+
+def _denied_or_missing(exc: ClientError) -> Tuple[str, str]:
+    code = _client_error_code(exc)
+    if code in {
+        "AccessDenied",
+        "AccessDeniedException",
+        "UnauthorizedOperation",
+        "UnrecognizedClientException",
+    }:
+        return STATUS_WARN, f"Detected but not probed ({code})"
+    if "NotFound" in code or code.endswith("NotFoundException") or code == "ResourceNotFoundException":
+        return STATUS_WARN, f"Named resource not found ({code})"
+    return STATUS_WARN, str(exc)
+
+
+def _probe_backend(backend: Dict[str, Any], session) -> Dict[str, Any]:
+    item = dict(backend)
+    kind = item.get("type") or "backend"
+    identifier = item.get("identifier") or ""
+    host = item.get("host") or ""
+
+    if item.get("probe") == "skip" or (item.get("source") == "secret" and not identifier):
+        item["status"] = STATUS_PASS
+        item["message"] = "Referenced from a secret; value not read"
+        return item
+
+    if session is None:
+        item["status"] = STATUS_PASS
+        item["message"] = "Detected from task definition"
+        return item
+
+    try:
+        if kind == "rds" and identifier:
+            rds = session.client("rds")
+            if item.get("aurora_cluster") or ".cluster-" in host.lower():
+                cluster = rds.describe_db_clusters(DBClusterIdentifier=identifier)[
+                    "DBClusters"
+                ][0]
+                state = cluster.get("Status") or ""
+                item["aws_status"] = state
+                item["engine"] = cluster.get("Engine")
+                item["status"] = (
+                    STATUS_FAIL if state.lower() in RDS_BAD_STATUSES else STATUS_PASS
+                )
+                item["message"] = f"Aurora cluster {identifier} is {state}"
+                return item
+            try:
+                instance = rds.describe_db_instances(DBInstanceIdentifier=identifier)[
+                    "DBInstances"
+                ][0]
+            except ClientError as exc:
+                if "NotFound" in _client_error_code(exc):
+                    cluster = rds.describe_db_clusters(DBClusterIdentifier=identifier)[
+                        "DBClusters"
+                    ][0]
+                    state = cluster.get("Status") or ""
+                    item["aws_status"] = state
+                    item["engine"] = cluster.get("Engine")
+                    item["status"] = (
+                        STATUS_FAIL if state.lower() in RDS_BAD_STATUSES else STATUS_PASS
+                    )
+                    item["message"] = f"Aurora cluster {identifier} is {state}"
+                    return item
+                raise
+            state = instance.get("DBInstanceStatus") or ""
+            item["aws_status"] = state
+            item["engine"] = instance.get("Engine")
+            item["status"] = STATUS_FAIL if state.lower() in RDS_BAD_STATUSES else STATUS_PASS
+            if state.lower() not in RDS_OK_STATUSES and item["status"] != STATUS_FAIL:
+                item["status"] = STATUS_WARN
+            item["message"] = f"RDS instance {identifier} is {state}"
+            return item
+
+        if kind == "redis" and identifier:
+            cache = session.client("elasticache")
+            try:
+                groups = cache.describe_replication_groups(
+                    ReplicationGroupId=identifier
+                ).get("ReplicationGroups", [])
+                if groups:
+                    state = groups[0].get("Status") or ""
+                    item["aws_status"] = state
+                    item["status"] = (
+                        STATUS_PASS if state.lower() == "available" else STATUS_WARN
+                    )
+                    item["message"] = (
+                        f"ElastiCache replication group {identifier} is {state}"
+                    )
+                    return item
+            except ClientError:
+                pass
+            clusters = cache.describe_cache_clusters(CacheClusterId=identifier).get(
+                "CacheClusters", []
+            )
+            if clusters:
+                state = clusters[0].get("CacheClusterStatus") or ""
+                item["aws_status"] = state
+                item["status"] = STATUS_PASS if state.lower() == "available" else STATUS_WARN
+                item["message"] = f"ElastiCache cluster {identifier} is {state}"
+                return item
+            item["status"] = STATUS_WARN
+            item["message"] = f"ElastiCache {identifier} not found"
+            return item
+
+        if kind == "dynamodb" and identifier:
+            table = session.client("dynamodb").describe_table(TableName=identifier)["Table"]
+            state = table.get("TableStatus") or ""
+            item["aws_status"] = state
+            item["status"] = STATUS_PASS if state == "ACTIVE" else STATUS_WARN
+            item["message"] = f"DynamoDB table {identifier} is {state}"
+            return item
+
+        if kind == "bedrock":
+            model_id = identifier or ""
+            if not model_id or "amazonaws.com" in model_id:
+                item["status"] = STATUS_PASS
+                item["message"] = "Bedrock configured (no model id to describe)"
+                return item
+            model = session.client("bedrock").get_foundation_model(
+                modelIdentifier=model_id
+            )
+            details = model.get("modelDetails") or {}
+            item["aws_status"] = "available"
+            item["message"] = (
+                f"Bedrock model {details.get('modelId', model_id)} is available"
+            )
+            item["status"] = STATUS_PASS
+            return item
+
+        if kind == "s3" and identifier:
+            session.client("s3").head_bucket(Bucket=identifier)
+            item["status"] = STATUS_PASS
+            item["message"] = f"S3 bucket {identifier} is reachable"
+            return item
+
+        if kind == "sqs" and identifier:
+            sqs = session.client("sqs")
+            if identifier.startswith("https://") or identifier.startswith("http://"):
+                sqs.get_queue_attributes(
+                    QueueUrl=identifier, AttributeNames=["QueueArn"]
+                )
+                item["message"] = "SQS queue URL is reachable"
+            else:
+                sqs.get_queue_url(QueueName=identifier.split("/")[-1])
+                item["message"] = f"SQS queue {identifier} exists"
+            item["status"] = STATUS_PASS
+            return item
+
+        if kind == "sns" and identifier.startswith("arn:"):
+            session.client("sns").get_topic_attributes(TopicArn=identifier)
+            item["status"] = STATUS_PASS
+            item["message"] = "SNS topic is reachable"
+            return item
+
+        if kind == "opensearch" and identifier:
+            domain = session.client("opensearch").describe_domain(
+                DomainName=identifier
+            )["DomainStatus"]
+            processing = domain.get("Processing")
+            item["status"] = STATUS_WARN if domain.get("Deleted") else STATUS_PASS
+            item["message"] = (
+                f"OpenSearch domain {identifier}"
+                + (" is processing" if processing else " is available")
+            )
+            return item
+
+        if kind == "docdb" and identifier:
+            clusters = session.client("docdb").describe_db_clusters(
+                DBClusterIdentifier=identifier
+            )["DBClusters"]
+            state = clusters[0].get("Status") or ""
+            item["aws_status"] = state
+            item["status"] = (
+                STATUS_FAIL if state.lower() in RDS_BAD_STATUSES else STATUS_PASS
+            )
+            item["message"] = f"DocumentDB cluster {identifier} is {state}"
+            return item
+
+        item["status"] = STATUS_PASS
+        item["message"] = "Detected from task definition (no AWS describe probe)"
+        return item
+    except ClientError as exc:
+        status, message = _denied_or_missing(exc)
+        item["status"] = status
+        item["message"] = message
+        return item
+    except Exception as exc:  # noqa: BLE001 — probe must not fail the whole service
+        item["status"] = STATUS_WARN
+        item["message"] = f"Could not probe: {exc}"
+        return item
+
+
+def evaluate_backends(backends: List[Dict[str, Any]], session) -> Dict[str, Any]:
+    if not backends:
+        return {
+            "status": STATUS_PASS,
+            "message": "No data stores or AWS backends inferred from the task definition",
+            "backends": [],
+        }
+
+    probed = [_probe_backend(item, session) for item in backends]
+    hard_fail = any(item.get("status") == STATUS_FAIL for item in probed)
+    real_warn = any(
+        item.get("status") == STATUS_WARN
+        and "not probed" not in str(item.get("message") or "").lower()
+        for item in probed
+    )
+    if hard_fail:
+        status = STATUS_FAIL
+    elif real_warn:
+        status = STATUS_WARN
+    else:
+        status = STATUS_PASS
+    kinds = sorted({str(item.get("type") or "backend") for item in probed})
+    return {
+        "status": status,
+        "message": f"{len(probed)} backend(s) detected ({', '.join(kinds)})",
+        "backends": probed,
+    }
+
+
 def enrich_stable_task_candidates(
     ecs_client,
     candidates: Dict[str, Dict[str, Any]],
@@ -1991,6 +2229,7 @@ def inspect_service(
     route53_index: Optional[Dict[str, List[Any]]] = None,
     cloudwatch_client=None,
     logs_client=None,
+    session=None,
 ) -> Dict[str, Any]:
     service_name = service_config["name"]
     expected_desired_count = service_config.get("expected_desired_count")
@@ -2126,6 +2365,10 @@ def inspect_service(
                 cluster_name=cluster_name,
                 route53_index=route53_index or {},
             )
+
+        if checks_config.get("include_backends", True):
+            inferred = infer_backends_from_task_definition(task_definition or {})
+            result["checks"]["backends"] = evaluate_backends(inferred, session)
 
         if checks_config.get("include_http_health", True):
             connectivity = result["checks"].get("connectivity")
@@ -2318,6 +2561,7 @@ def inspect_all(config: Dict[str, Any]) -> Dict[str, Any]:
                 route53_index,
                 cloudwatch_client,
                 logs_client,
+                session,
             )
             for cluster_name, service_config, prefetched_service, prefetch_error in work_items
         ]
@@ -2437,6 +2681,14 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         lines.append(f"  DNS: {', '.join(unique)}")
     if connectivity.get("summary"):
         lines.append(f"  Connectivity: {connectivity['summary']}")
+
+    backends = checks.get("backends") or {}
+    if backends.get("backends"):
+        lines.append(f"  Backends: {backends.get('message')}")
+        for backend in backends.get("backends", [])[:8]:
+            lines.append(
+                f"    - {backend.get('label')}: {backend.get('message') or backend.get('type')}"
+            )
 
     if item.get("status") != STATUS_PASS:
         events = checks.get("recent_events", {}).get("events", [])
@@ -2761,6 +3013,7 @@ def build_sample_report() -> Dict[str, Any]:
                             {"id": "tg_tg_orders", "type": "target_group", "label": "tg-orders", "detail": "HTTP · 8080 → orders-api:8080"},
                             {"id": "ecs_orders_api", "type": "ecs_service", "label": "orders-api", "detail": "dev-apps-cluster"},
                             {"id": "rds_orders_db", "type": "rds", "label": "RDS: orders-db", "detail": "inferred backend"},
+                            {"id": "ddb_orders", "type": "dynamodb", "label": "DynamoDB: orders", "detail": "inferred backend"},
                             {"id": "ecr_orders_api", "type": "ecr", "label": "orders-api", "detail": "container image"},
                         ],
                         "edges": [
@@ -2768,6 +3021,7 @@ def build_sample_report() -> Dict[str, Any]:
                             {"from": "alb_dev_apps", "to": "tg_tg_orders", "label": "forwards to"},
                             {"from": "tg_tg_orders", "to": "ecs_orders_api", "label": "registers tasks"},
                             {"from": "ecs_orders_api", "to": "rds_orders_db", "label": "connects"},
+                            {"from": "ecs_orders_api", "to": "ddb_orders", "label": "connects"},
                             {"from": "ecr_orders_api", "to": "ecs_orders_api", "label": "pulls image"},
                         ],
                         "notes": [],
@@ -2801,6 +3055,34 @@ def build_sample_report() -> Dict[str, Any]:
                                     },
                                 ],
                             }
+                        ],
+                    },
+                    "backends": {
+                        "status": STATUS_PASS,
+                        "message": "2 backend(s) detected (dynamodb, rds)",
+                        "backends": [
+                            {
+                                "type": "rds",
+                                "label": "RDS: orders-db",
+                                "host": "orders-db.abc123.us-east-1.rds.amazonaws.com",
+                                "identifier": "orders-db",
+                                "source": "inferred",
+                                "env": "DB_HOST",
+                                "status": STATUS_PASS,
+                                "aws_status": "available",
+                                "engine": "postgres",
+                                "message": "RDS instance orders-db is available",
+                            },
+                            {
+                                "type": "dynamodb",
+                                "label": "DynamoDB: orders",
+                                "identifier": "orders",
+                                "source": "env",
+                                "env": "DYNAMODB_TABLE",
+                                "status": STATUS_PASS,
+                                "aws_status": "ACTIVE",
+                                "message": "DynamoDB table orders is ACTIVE",
+                            },
                         ],
                     },
                 },
@@ -2910,17 +3192,19 @@ def build_sample_report() -> Dict[str, Any]:
                     },
                     "connectivity": {
                         "status": STATUS_PASS,
-                        "summary": "Load Balancer → Target Group → ECS → ECR",
+                        "summary": "Load Balancer → Target Group → ECS → backend(s) → ECR",
                         "entrypoint": "alb_dev_internal",
                         "nodes": [
                             {"id": "alb_dev_internal", "type": "alb", "label": "dev-internal-alb", "detail": "APPLICATION · internal"},
                             {"id": "tg_tg_agents", "type": "target_group", "label": "tg-agents", "detail": "HTTP · 8080 → agents-service:8080"},
                             {"id": "ecs_agents_service", "type": "ecs_service", "label": "agents-service", "detail": "dev-apps-cluster"},
+                            {"id": "bedrock_claude", "type": "bedrock", "label": "Bedrock: anthropic.claude-3-5-sonnet", "detail": "inferred backend"},
                             {"id": "ecr_agents_service", "type": "ecr", "label": "agents-service", "detail": "container image"},
                         ],
                         "edges": [
                             {"from": "alb_dev_internal", "to": "tg_tg_agents", "label": "forwards to"},
                             {"from": "tg_tg_agents", "to": "ecs_agents_service", "label": "registers tasks"},
+                            {"from": "ecs_agents_service", "to": "bedrock_claude", "label": "connects"},
                             {"from": "ecr_agents_service", "to": "ecs_agents_service", "label": "pulls image"},
                         ],
                         "notes": [],
@@ -2945,6 +3229,22 @@ def build_sample_report() -> Dict[str, Any]:
                                     }
                                 ],
                             }
+                        ],
+                    },
+                    "backends": {
+                        "status": STATUS_PASS,
+                        "message": "1 backend(s) detected (bedrock)",
+                        "backends": [
+                            {
+                                "type": "bedrock",
+                                "label": "Bedrock: anthropic.claude-3-5-sonnet-20241022-v2:0",
+                                "identifier": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                                "source": "env",
+                                "env": "BEDROCK_MODEL_ID",
+                                "status": STATUS_PASS,
+                                "aws_status": "available",
+                                "message": "Bedrock model anthropic.claude-3-5-sonnet-20241022-v2:0 is available",
+                            },
                         ],
                     },
                 },
@@ -3108,6 +3408,24 @@ def build_sample_report() -> Dict[str, Any]:
                                     }
                                 ],
                             }
+                        ],
+                    },
+                    "backends": {
+                        "status": STATUS_WARN,
+                        "message": "1 backend(s) detected (rds)",
+                        "backends": [
+                            {
+                                "type": "rds",
+                                "label": "RDS: payments-db",
+                                "host": "payments-db.abc123.us-east-1.rds.amazonaws.com",
+                                "identifier": "payments-db",
+                                "source": "inferred",
+                                "env": "DATABASE_URL",
+                                "status": STATUS_WARN,
+                                "aws_status": "configuring-enhanced-monitoring",
+                                "engine": "aurora-postgresql",
+                                "message": "RDS instance payments-db is configuring-enhanced-monitoring",
+                            },
                         ],
                     },
                 },

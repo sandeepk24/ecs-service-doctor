@@ -1115,6 +1115,16 @@ body {
   border-color: rgba(248, 113, 113, 0.35);
 }
 
+.target-group-item.warn {
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.backend-message {
+  margin: 0.4rem 0 0;
+  font-size: 0.92rem;
+  color: var(--text-2);
+}
+
 .target-group-title {
   display: flex;
   flex-wrap: wrap;

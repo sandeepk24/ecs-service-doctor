@@ -85,6 +85,12 @@ const TYPE_LABELS: Record<string, string> = {
   cloud_map: "Cloud Map",
   ecr: "ECR",
   internet: "Internet",
+  bedrock: "Bedrock",
+  s3: "S3",
+  sqs: "SQS",
+  sns: "SNS",
+  opensearch: "OpenSearch",
+  msk: "MSK",
   backend: "Backend",
 };
 
@@ -98,6 +104,12 @@ const TYPE_CLASS: Record<string, string> = {
   redis: "database",
   docdb: "database",
   dynamodb: "database",
+  bedrock: "database",
+  s3: "ecr",
+  sqs: "discovery",
+  sns: "discovery",
+  opensearch: "database",
+  msk: "database",
   cloud_map: "discovery",
   ecr: "ecr",
   internet: "internet",
@@ -114,7 +126,19 @@ const TRAFFIC_RANK: Record<string, number> = {
   ecs_service: 4,
 };
 
-const BACKEND_TYPES = new Set(["rds", "redis", "docdb", "dynamodb", "backend"]);
+const BACKEND_TYPES = new Set([
+  "rds",
+  "redis",
+  "docdb",
+  "dynamodb",
+  "bedrock",
+  "s3",
+  "sqs",
+  "sns",
+  "opensearch",
+  "msk",
+  "backend",
+]);
 
 interface Props {
   topology: Topology;

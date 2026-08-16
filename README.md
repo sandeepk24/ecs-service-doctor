@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, **task restarts in the last 12 hours (with the exact AWS stop reason)**, container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
+This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, **task restarts in the last 12 hours (with the exact AWS stop reason)**, **inferred backends** (RDS, DynamoDB, Bedrock, ElastiCache, S3, and more), container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
 
 ---
 
@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.9.9**):
+Everything this repo provides today (**v0.10.0**):
 
 ### Application health checks
 
@@ -52,9 +52,10 @@ Shareable, self-contained HTML (no external assets after export):
 - **Glass ops dashboard** — midnight navy / slate teal, cyan 3D pills, Amazon ECS logo
 - **KPI strip and overall health bar** — services, tasks, targets, deployments
 - **Needs attention** — only the services that are not healthy, with a jump-to-service link
-- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, **Route 53**, and **Logs**
+- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, **Route 53**, **Backends**, and **Logs**
 - **Service tiles** — one row per cluster; full service names; status, tasks/targets; **Restarted N×** when tasks restarted in the last 12 hours
-- **Service detail** — full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, app health, endpoints, known-good versions, events
+- **Service detail** — full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, known-good versions, events
+- **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and other stores inferred from task-definition env vars, URIs, and ARNs, with read-only AWS status when IAM allows
 - **Logs tab** — pick a service; CloudWatch lines plus **why it restarted** (exact stop reason, container reason, exit code)
 - **Target groups tab** — every group in the cluster once, with service, port, health-check path/matcher, and healthy/unhealthy counts
 - **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
@@ -409,6 +410,26 @@ Set `include_logs` or `include_restarts` to `false` to skip. Restarts do not fai
 
 ---
 
+## Backends (databases, Bedrock, queues)
+
+The HTML report **Backends** tab lists data stores and AWS APIs inferred from the running task definition:
+
+- Environment values such as `DB_HOST`, `DATABASE_URL`, `REDIS_URL`, `DYNAMODB_TABLE`, `BEDROCK_MODEL_ID`, `S3_BUCKET`, queue URLs
+- Hostnames like `*.rds.amazonaws.com`, `*.cache.amazonaws.com`, `bedrock-runtime.*`
+- ARNs on env vars or `secrets.valueFrom` (RDS, DynamoDB tables, S3, SQS, SNS, Bedrock models)
+
+When the identifier can be parsed, the doctor **describes** the resource (read-only): RDS/Aurora instance status, DynamoDB table status, Bedrock `GetFoundationModel`, ElastiCache, S3 `HeadBucket`, SQS, SNS, OpenSearch, DocumentDB. It does **not** invoke Bedrock models or open TCP into your VPC (that would false-fail from a laptop). Missing IAM is a per-backend warning, not a service failure.
+
+```json
+{
+  "checks": {
+    "include_backends": true
+  }
+}
+```
+
+---
+
 ## Config file (optional)
 
 Use a config file when you check many services regularly or need advanced options.
@@ -534,6 +555,18 @@ Read-only access only:
 - `route53:ListResourceRecordSets`
 - `servicediscovery:GetService`
 - `sts:GetCallerIdentity`
+- `rds:DescribeDBInstances`
+- `rds:DescribeDBClusters`
+- `dynamodb:DescribeTable`
+- `bedrock:GetFoundationModel`
+- `elasticache:DescribeCacheClusters`
+- `elasticache:DescribeReplicationGroups`
+- `s3:ListBucket` (HeadBucket)
+- `sqs:GetQueueUrl`
+- `sqs:GetQueueAttributes`
+- `sns:GetTopicAttributes`
+- `es:DescribeDomain` / `opensearch:DescribeDomain`
+- `docdb:DescribeDBClusters`
 - `sns:Publish` (only if you use SNS notifications)
 
 ---

@@ -135,7 +135,7 @@ export default function App() {
             const targetGroups = collectClusterTargetGroups(services);
             const loadBalancers = collectClusterLoadBalancers(services);
             const dnsRecords = collectClusterDnsRecords(services);
-            const backends = collectClusterBackends(services);
+            const backends = collectClusterBackends(ordered);
 
             return (
               <section
@@ -238,7 +238,10 @@ export default function App() {
                 )}
 
                 {section === "backends" && (
-                  <BackendsPanel backends={backends} />
+                  <BackendsPanel
+                    backends={backends}
+                    serviceOrder={ordered.map((item) => item.service)}
+                  />
                 )}
 
                 {section === "logs" && (

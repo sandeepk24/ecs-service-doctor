@@ -2,25 +2,25 @@
 
 **Is your application on ECS actually healthy, or did the control plane just say it is?**
 
-ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach RDS, DynamoDB, or other backends.
+ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach its databases and backends.
 
-This tool checks **applications hosted on AWS ECS** — not just ECS cluster metrics. It validates what matters after a deploy: task counts, **CPU and memory**, rollout state, target group attachment, load balancer health, **the same HTTP health checks as your ALB**, recent ECS events, **CloudWatch application logs**, **task restarts in the last 12 hours (with the exact AWS stop reason)**, **inferred backends** (RDS, DynamoDB, Bedrock, ElastiCache, S3, and more), container images, the connectivity path your app depends on, and **the last few task definitions that ran stably** so you can roll back quickly.
+This tool checks **applications hosted on AWS ECS** — not just cluster metrics. It validates what matters after every deploy: task counts, **CPU and memory**, rollout state, target group health, **the same HTTP checks your ALB runs**, recent ECS events, **CloudWatch logs**, **task restarts with the exact stop reason**, **inferred backends** (RDS, DynamoDB, Bedrock, ElastiCache, S3, and more), container images, and **the last stable task definitions** so you can roll back in one command.
 
 ---
 
-## Why applications on ECS?
+## Why ECS applications are hard to observe
 
-Many teams run production apps on ECS because it integrates cleanly with the rest of AWS — especially **AI and accelerator workloads** that call **Amazon Bedrock**, store state in **RDS** or **DynamoDB**, pull images from **ECR**, and sit behind **ALB/NLB** with **Route 53** DNS. ECS gives you container orchestration without managing Kubernetes, and it fits naturally into VPC, IAM, and Secrets Manager patterns.
+Many teams run production apps on ECS because it integrates cleanly with the rest of AWS — AI workloads calling **Amazon Bedrock**, data stored in **RDS** or **DynamoDB**, images pulled from **ECR**, traffic routed through **ALB/NLB** and **Route 53**. ECS handles scheduling without Kubernetes overhead and fits naturally into VPC, IAM, and Secrets Manager.
 
 That stack is powerful, but **application health is harder to see than ECS task health**. A service can show `running=2` while:
 
 - Bedrock or database calls fail because env vars, secrets, or security groups are wrong
-- The load balancer routes traffic to tasks that fail HTTP health checks
-- A rolling deploy leaves two active revisions and half your traffic on a bad build
+- The load balancer routes to tasks that fail HTTP health checks
+- A rolling deploy leaves two active revisions with half your traffic on a bad build
 - Target groups are misconfigured (wrong container port, no registered targets)
-- Tasks are up but CPU or memory is saturating and the app is about to fail
+- Tasks are up but CPU or memory is saturating and the app is about to fall over
 
-ecs-service-doctor answers the question operators and on-call engineers actually care about: **can real traffic reach this app, and is the running task the one we intended to deploy?**
+ecs-service-doctor answers what operators and on-call engineers actually need to know: **can real traffic reach this app, and is the running revision the one we intended to deploy?**
 
 No config file required for a single check.
 
@@ -28,86 +28,86 @@ No config file required for a single check.
 
 ## Features
 
-Everything this repo provides today (**v0.10.1**):
+Everything included today (**v0.10.1**):
 
 ### Application health checks
 
-- **Task counts** — running vs desired vs pending; optional expected desired count per service
-- **CPU and memory** — reserved Fargate/EC2 size plus CloudWatch utilization (last 15 minutes); warns at 80%, fails at 90%
+- **Task counts** — running vs desired vs pending; optional expected count per service
+- **CPU and memory** — reserved Fargate/EC2 size plus CloudWatch utilization (last 15 min); warns at 80%, fails at 90%
 - **Deployment status** — rollout finished, in progress, or failed; flags multiple active revisions during deploys
-- **HTTP endpoint check** — probes the same path and success codes as the ALB target-group health check (override with config/CLI)
-- **Endpoints** — host-header routes and matching Route 53 names are probed with that target-group path/matcher
-- **Green / red status lights** — green when the app health check passes, red when it fails
-- **Recent ECS events** — latest service messages (placement failures, health check failures, steady state, etc.)
-- **Task restarts** — how many times a service started replacement tasks in the last 12 hours, plus the **exact ECS `stoppedReason`**, container exit code, and container reason
-- **CloudWatch logs** — recent `awslogs` lines from each service’s log group
-- **Container image** — full image URI/tag from the live task definition (what is actually deployed)
+- **HTTP endpoint check** — probes the same path and success codes as the ALB target-group health check (override with config or CLI)
+- **Endpoints** — host-header routes and matching Route 53 names probed with that target-group path/matcher
+- **Recent ECS events** — placement failures, health check failures, steady state, and more
+- **Task restarts** — stopped tasks in the last 12 hours with the **exact `stoppedReason`**, container exit code, and container reason
+- **CloudWatch logs** — recent `awslogs` lines from each service's log group
+- **Container image** — full image URI/tag from the live task definition
 - **Launch details** — Fargate/EC2, platform version, reserved CPU/memory, network mode
 - **Pass / warn / fail** — per-check and per-service status with plain-language summaries
 
 ### HTML Service Health Report
 
-Shareable, self-contained HTML (no external assets after export):
+Shareable, self-contained HTML — no external assets, open in any browser offline:
 
-- **Glass ops dashboard** — midnight navy / slate teal by default, with a **Day / Night** toggle for pastel frosted-glass day mode
-- **KPI strip and overall health bar** — services, tasks, targets, deployments
-- **Needs attention** — only the services that are not healthy, with a jump-to-service link
-- **Cluster tabs** — **Services**, **Target groups**, **Load balancers**, **Route 53**, **Backends**, and **Logs**
-- **Service tiles** — one row per cluster; full service names; status, tasks/targets; **Restarted N×** when tasks restarted in the last 12 hours
-- **Service detail** — full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, known-good versions, events
-- **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and other stores inferred from task-definition env vars, URIs, and ARNs, with read-only AWS status when IAM allows
-- **Logs tab** — pick a service; CloudWatch lines plus **why it restarted** (exact stop reason, container reason, exit code)
-- **Target groups tab** — every group in the cluster once, with service, port, health-check path/matcher, and healthy/unhealthy counts
-- **Load balancers tab** — unique ALB/NLB details once, with the services that use each balancer
-- **Route 53 tab** — DNS records that alias or CNAME to cluster ALBs/NLBs, plus names that match listener host headers (CloudFront and CNAME chains included)
+- **Day / Night theme toggle** — midnight navy glass by default; switch to a bright pastel frosted-glass day mode
+- **KPI strip and health bar** — services, tasks, targets, deployments at a glance
+- **Needs attention** — only the services that are not healthy, with a jump link
+- **Cluster tabs** — **Services · Backends · Target groups · Load balancers · Route 53 · Logs**
+- **Service tiles** — one row per cluster; status, tasks/targets; **Restarted N×** chip when tasks restarted in the last 12 hours
+- **Service detail** — image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, known-good versions, events
+- **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and more — inferred from task-definition env vars, URIs, and ARNs, with AWS resource status when IAM allows
+- **Logs tab** — CloudWatch lines plus the exact stop reason for each recent restart
+- **Target groups tab** — health-check path/matcher, healthy/unhealthy counts per group
+- **Load balancers tab** — ALB/NLB details, listeners, SSL policy, host-header rules
+- **Route 53 tab** — DNS records pointing at cluster load balancers (CloudFront and CNAME chains included)
 - Sample: [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html)
 
 ### Continuous monitoring and alerts
 
-- **`--interval 10m`** — re-check on a schedule until you stop the process (also `30s`, `1h`)
-- **Slack webhook** — `--notify-slack` or config `notifications.slack_webhook_url`
-- **Microsoft Teams** — `--notify-teams` or config `notifications.teams_webhook_url`
+- **`--interval 10m`** — re-check on a schedule until stopped (`30s`, `10m`, `1h`)
+- **Slack webhook** — `--notify-slack` or `notifications.slack_webhook_url`
+- **Microsoft Teams** — `--notify-teams` or `notifications.teams_webhook_url`
 - **Generic webhook** — `--notify-webhook` for any JSON endpoint (PagerDuty, custom bots, etc.)
-- **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email/SMS/Lambda fan-out
-- **Alert fingerprinting** — same failure is not re-notified on every interval tick until the issue changes or clears
+- **SNS** — `--notify-sns` / `notifications.sns_topic_arn` for email, SMS, or Lambda fan-out
+- **Alert fingerprinting** — the same failure is not re-notified every interval tick until status changes or clears
 - **Notify on FAIL by default**; add `--notify-on-warn` to include warnings
 
-### Load balancer and target groups
+### Load balancers and target groups
 
-- **Target group detection** — finds target groups attached to the ECS service
-- **Attachment validation** — target group exists, is attached to ALB/NLB, ECS container name/port matches the task definition
-- **Target health** — healthy, unhealthy, and registering target counts
+- **Target group detection** — finds groups attached to each ECS service
+- **Attachment validation** — group exists, is attached to ALB/NLB, ECS container name/port matches task definition
+- **Target health** — healthy, unhealthy, and registering counts
 - **ALB / NLB details** — DNS, scheme, VPC, AZs, listeners, SSL policy, host-header rules with priority numbers
-- **Route 53** — hosted-zone records that alias or CNAME to the ALB/NLB (including `dualstack.` targets), plus records whose names match listener host headers
-- **Host-header + Route 53 health** — each hostname that belongs to this service is checked using the target-group path and matcher
-- **Classic ELB notice** — warns when a service uses a classic load balancer (ALB/NLB required for full TG checks)
+- **Route 53** — hosted-zone records that alias or CNAME to the ALB/NLB (including `dualstack.` targets)
+- **Host-header + Route 53 health** — each hostname belonging to this service is checked using the target-group path and matcher
 
 ### Stable tasks and rollback
 
 - **Last 3 stable task definitions** — recent known-good revisions per service (configurable limit)
 - **Discovery sources** — completed deployments, steady-state events, cleanly stopped tasks
-- **Rollback commands** — copy-paste `aws ecs update-service` for each stable revision
+- **Rollback commands** — copy-paste `aws ecs update-service` per revision
 - **Image per revision** — see which ECR tag belonged to each stable build
 
-### Connectivity auto-detection
+### Backends auto-detection
 
-Used in the CLI/JSON summary (Route 53, ALB/NLB, target groups, inferred backends):
+Infers databases, queues, and AI services from the running task definition and optionally describes them via read-only AWS APIs:
 
-- **Route 53** — DNS records pointing at the load balancer
-- **ALB / NLB** — load balancer name, scheme (public/internal)
-- **Cloud Map / Service Connect** — service registry attachments
-- **Inferred backends** — RDS, DynamoDB, ElastiCache, DocumentDB, and other AWS endpoints parsed from container env vars and secrets
-- **ECR** — container image source
+- **Databases** — RDS, Aurora, DocumentDB, ElastiCache detected from host env vars and `.rds.amazonaws.com` / `.cache.amazonaws.com` endpoints
+- **Amazon Bedrock** — `BEDROCK_MODEL_ID`, `anthropic.claude*`, and `bedrock-runtime.*` patterns
+- **DynamoDB** — `DYNAMODB_TABLE`, table name env vars, ARNs
+- **S3, SQS, SNS** — bucket names, queue URLs, topic ARNs
+- **OpenSearch, MSK** — endpoint patterns
+- **ARN inference** — secrets `valueFrom` ARNs (DynamoDB, RDS, Bedrock, S3, SQS, SNS)
+- **AWS status probes** — RDS instance state, DynamoDB table status, Bedrock model availability, ElastiCache cluster state, S3 bucket reachability, SQS/SNS presence
+- Missing IAM is a per-backend warning, not a whole-service failure
 
 ### CLI and configuration
 
-- **Zero config** — `--cluster` + `--service` is enough for a one-off check
+- **Zero config** — `--cluster` + `--service` is enough
 - **Multiple services** — repeat `--service` or use `--all-services` for an entire cluster
-- **Optional JSON config** — minimal single-cluster config or advanced multi-cluster setup
-- **Critical services** — mark services as critical in config; report tracks critical failures separately
-- **Account safety** — refuse to run if connected to the wrong AWS account (`--account` or config)
-- **Region and profile** — `--region`, `--profile`, or config; region auto-detected from AWS CLI when omitted
-- **Parallel checks** — batched and parallel AWS API calls for faster multi-service runs
+- **Critical services** — mark services as critical; report tracks critical failures separately
+- **Account safety** — refuse to run if connected to the wrong AWS account
+- **Region and profile** — `--region`, `--profile`, or auto-detected from AWS CLI
+- **Parallel checks** — batched and parallel AWS API calls for fast multi-service runs
 
 ### Output formats
 
@@ -116,13 +116,13 @@ Used in the CLI/JSON summary (Route 53, ALB/NLB, target groups, inferred backend
 | **Plain CLI** | Default — human-readable HEALTHY / WARNING / UNHEALTHY summary |
 | **`--verbose`** | Full technical detail including rollback commands and event lists |
 | **`--json`** | Machine-readable report for CI/CD pipelines and automation |
-| **`--html`** | Self-contained **ECS Service Health Report** (React, no external assets after export) |
+| **`--html`** | Self-contained **ECS Service Health Report** (no external assets) |
 
 ### CI/CD and safety
 
 - **Exit codes** — `0` pass, `1` warnings, `2` failures (script-friendly)
-- **Read-only IAM** — no writes to ECS, load balancers, or Route 53; inspect only
-- **No agents** — runs from your laptop, CI runner, or CloudShell with AWS credentials
+- **Read-only IAM** — no writes to ECS, load balancers, or Route 53
+- **No agents** — runs from your laptop, CI runner, or CloudShell
 
 ---
 
@@ -134,7 +134,7 @@ Used in the CLI/JSON summary (Route 53, ALB/NLB, target groups, inferred backend
 pip install -r requirements.txt
 ```
 
-**2. Make sure AWS credentials work** (same as the AWS CLI):
+**2. Verify AWS credentials** (same as the AWS CLI):
 
 ```bash
 aws sts get-caller-identity
@@ -171,14 +171,15 @@ python ecs_doctor.py -c my-cluster -s my-api --json
 # HTML report — shareable page grouped by cluster
 python ecs_doctor.py -c my-cluster --all-services --html
 
-# Continuous monitor every 10 minutes + Slack or Teams when health checks fail
+# Continuous monitor every 10 minutes + Slack when health checks fail
 python ecs_doctor.py --config config.json --interval 10m \
   --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
 
+# Continuous monitor + Teams
 python ecs_doctor.py --config config.json --interval 10m \
   --notify-teams https://outlook.office.com/webhook/XXX
 
-# One service with an explicit health URL
+# Explicit health URL
 python ecs_doctor.py -c my-cluster -s my-api \
   --health-url https://api.example.com/health \
   --interval 10m --notify-webhook https://example.com/hooks/ecs
@@ -196,8 +197,8 @@ python ecs_doctor.py -c my-cluster -s my-api \
 | `--json` | Machine-readable output for pipelines |
 | `--interval 10m` | Continuous checks (`30s`, `10m`, `1h`) |
 | `--health-url URL` | HTTP check URL (overrides auto-detect) |
-| `--health-path /health` | Override path; otherwise uses the target-group HealthCheckPath |
-| `--expected-http-status 200` | Override matcher; otherwise uses the target-group success codes |
+| `--health-path /health` | Override path; otherwise uses the target-group `HealthCheckPath` |
+| `--expected-http-status 200` | Override matcher; otherwise uses target-group success codes |
 | `--notify-slack WEBHOOK` | Slack alert on FAIL |
 | `--notify-teams WEBHOOK` | Microsoft Teams alert on FAIL |
 | `--notify-webhook URL` | Generic JSON webhook on FAIL |
@@ -208,26 +209,21 @@ python ecs_doctor.py -c my-cluster -s my-api \
 
 ## Continuous monitoring and HTTP health alerts
 
-Run a check every 10 minutes and notify when a service is unhealthy or its health endpoint does not match the target-group success codes:
+Run a check every 10 minutes and notify when a service is unhealthy or its health endpoint fails:
 
 ```bash
 python ecs_doctor.py --config config.json --interval 10m \
   --notify-slack https://hooks.slack.com/services/XXX/YYY/ZZZ
-
-python ecs_doctor.py --config config.json --interval 10m \
-  --notify-teams https://outlook.office.com/webhook/XXX
 ```
 
-How the HTTP check picks a URL and matcher:
+How the HTTP check resolves a URL and matcher:
 
 1. Per-service `health_check_url` / `health_check_path` / `expected_http_status` in config
 2. CLI `--health-url` / `--health-path` / `--expected-http-status`
 3. ALB target-group `HealthCheckPath`, `HealthCheckProtocol`, `Matcher.HttpCode`, and timeout
 4. Fallback: `/health` and status `200`
 
-TCP-only target groups are not HTTP-probed. Wildcard host headers are listed but not probed. Route 53 names are included when they match this service’s host-header rules (or all names on the service ALB if there are no host-header rules).
-
-If the response is outside the matcher (for example `200-299`), that service fails and notifications fire.
+TCP-only target groups are skipped. Wildcard host headers are listed but not probed. Route 53 names are included when they match this service's host-header rules.
 
 Example config:
 
@@ -252,61 +248,54 @@ Example config:
 }
 ```
 
-Alerts include the failing cluster/service, HTTP status/URL when available, and a short issue summary. In continuous mode, the same unhealthy fingerprint is not re-sent every tick until the status changes.
-
-For Microsoft Teams, use an incoming webhook (classic Office connector) or a Power Automate “When a Teams webhook request is received” workflow URL. Both `--notify-teams` and `notifications.teams_webhook_url` work. You can send Slack and Teams at the same time.
+Alerts include the cluster/service, HTTP status and URL when available, and a short issue summary. In continuous mode, the same unhealthy fingerprint is not re-sent every tick until status changes.
 
 ---
 
 ## What it checks
 
-Application and infrastructure signals together:
-
 | Area | What you learn |
 |------|----------------|
-| **Tasks** | Running vs desired count — is the app scaled correctly? |
-| **CPU / Memory** | Reserved task size (vCPU / GiB) and last-15-minute CloudWatch utilization; warn at 80%, fail at 90% |
-| **Deployments** | Rollout finished or stuck with multiple active revisions |
+| **Tasks** | Running vs desired — is the app scaled correctly? |
+| **CPU / Memory** | Reserved task size and last-15-min CloudWatch utilization; warn at 80%, fail at 90% |
+| **Deployments** | Rollout finished or stuck; multiple active revisions flagged |
 | **Load balancers** | Target groups detected, attached to ALB/NLB, container port matches task definition |
-| **Route 53** | Hosted-zone records that alias or CNAME to the service ALB/NLB |
-| **Target health** | Healthy vs unhealthy registered targets behind the load balancer |
-| **Container image** | Which image/tag is actually deployed (from the task definition) |
-| **Recent events** | Latest ECS error messages (task placement failures, health check failures, etc.) |
+| **Route 53** | Hosted-zone records pointing at the service ALB/NLB |
+| **Target health** | Healthy vs unhealthy registered targets |
+| **Container image** | Which image/tag is actually deployed |
+| **Recent events** | Latest ECS error messages (placement failures, health check failures, etc.) |
 | **Restarts** | Stopped tasks in the last 12 hours — count, `stoppedReason`, container reason, exit code |
-| **Logs** | Recent CloudWatch `awslogs` lines for the running task definition |
-| **Stable tasks** | Last 3 task definitions that ran stably — with image tag and a copy-paste rollback command |
-| **HTTP** | Application URL matches the target-group health-check path and success codes |
-| **Endpoints** | Host-header rules and matching Route 53 names get a separate HTTP check per hostname |
-| **Connectivity** | Rough path diagram: Route 53 → ALB/NLB → target group → ECS → inferred backends (RDS, DynamoDB, ElastiCache, etc. from env/secrets) → ECR |
+| **Logs** | Recent CloudWatch `awslogs` lines |
+| **Backends** | RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch and more — inferred from env vars and ARNs, with AWS status when IAM allows |
+| **Stable tasks** | Last 3 known-good task definitions with image tag and a copy-paste rollback command |
+| **HTTP** | App URL checked against target-group path and success codes |
+| **Endpoints** | Host-header rules and matching Route 53 names — separate HTTP check per hostname |
+| **Connectivity** | Path summary: Route 53 → ALB/NLB → target group → ECS → inferred backends → ECR |
 
-This is **read-only** — it inspects your services and produces a CLI summary, JSON for CI/CD, or a shareable HTML **Service Health Report**.
+All checks are **read-only** — the tool inspects and reports; it never writes to your AWS resources.
 
 ---
 
 ## Stable tasks and rollback
 
-When a deploy goes wrong, you often need the **previous task definition revision** — not just a count of running tasks. ECS tracks deployments, but finding “what was last known-good” usually means digging through events or guessing revision numbers.
-
-ecs-service-doctor lists the **last 3 stable task definitions** per service. Each entry includes:
+When a deploy goes wrong you need the **previous task definition revision** fast. ecs-service-doctor lists the **last 3 stable task definitions** per service, each with:
 
 | Field | Description |
 |-------|-------------|
-| **Task definition** | Short form, e.g. `orders-api:41` — what you pass to `update-service` |
+| **Task definition** | Short form e.g. `orders-api:41` |
 | **Image** | Container image/tag from that revision |
-| **Last stable at** | When that revision last reached a stable state |
-| **Source** | How it was discovered (see below) |
-| **Current** | Whether this is the revision the service runs now |
-| **Rollback command** | Ready-to-run AWS CLI command |
+| **Last stable at** | When it last reached a stable state |
+| **Source** | Discovered from a deployment, steady-state event, or stopped task |
+| **Current** | Whether this is the revision running now |
+| **Rollback command** | Ready-to-run `aws ecs update-service` command |
 
 ### How stable tasks are found
 
-The tool combines three read-only sources:
+Three read-only sources, deduplicated and sorted by most recently stable:
 
-1. **Completed deployments** — ECS deployment records with `rolloutState: COMPLETED` and running tasks
-2. **Steady-state events** — service events like `(service X) has reached a steady state` correlated with task definition revisions
-3. **Recently stopped tasks** — tasks stopped cleanly by ECS during deploys or scale-in (`ServiceSchedulerInitiated`, `UserInitiated`), not crash loops
-
-Results are deduplicated by revision, sorted by most recently stable, and limited to **3 by default**.
+1. **Completed deployments** — ECS deployment records with `rolloutState: COMPLETED`
+2. **Steady-state events** — `(service X) has reached a steady state` correlated with task revisions
+3. **Cleanly stopped tasks** — stopped by `ServiceSchedulerInitiated` or `UserInitiated`, not crash loops
 
 ### Example CLI output
 
@@ -322,17 +311,7 @@ Results are deduplicated by revision, sorted by most recently stable, and limite
   Stable task: orders-api:40 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/orders-api:v1.2.1
 ```
 
-Use `--verbose` to see full rollback commands:
-
-```
-  Stable Tasks    : [PASS] 3 recent stable task definition(s): orders-api:42, orders-api:41, orders-api:40
-    - orders-api:41 last stable 2026-08-05T14:20:00+00:00 -> .../orders-api:v1.2.2
-      Rollback: aws ecs update-service --cluster dev-apps-cluster --service orders-api --task-definition orders-api:41 --force-new-deployment
-```
-
-### Roll back to a stable revision
-
-Copy the rollback command from the report or run it yourself:
+### Roll back in one command
 
 ```bash
 aws ecs update-service \
@@ -342,11 +321,9 @@ aws ecs update-service \
   --force-new-deployment
 ```
 
-This does **not** roll back automatically — it only surfaces candidates so you can decide and execute the rollback.
+This does **not** roll back automatically — it surfaces candidates and you decide.
 
 ### Config (optional)
-
-In an advanced config file you can tune stable task history:
 
 ```json
 {
@@ -357,13 +334,11 @@ In an advanced config file you can tune stable task history:
 }
 ```
 
-Set `include_stable_task_history` to `false` to skip this check. Increase `stable_task_limit` if you want more than 3 rollback candidates (default: `3`).
-
 ---
 
 ## CPU and memory
 
-Each service reports **reserved** CPU/memory from the task definition and **utilization** from CloudWatch (`AWS/ECS` `CPUUtilization` and `MemoryUtilization`, last 15 minutes).
+Each service reports **reserved** CPU/memory from the task definition and **utilization** from CloudWatch (`AWS/ECS`, last 15 minutes).
 
 | Signal | Default |
 |--------|---------|
@@ -384,15 +359,13 @@ If CloudWatch has no datapoints yet, reserved size still shows and the service i
 }
 ```
 
-Set `include_cpu_memory` to `false` to skip this check. Requires `cloudwatch:GetMetricData`.
-
 ---
 
 ## Logs and restarts
 
-The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group (`logs:FilterLogEvents`). When tasks restarted in the lookback window, it also lists the **exact ECS stop reason** from stopped tasks (`stoppedReason`, container reason, exit code) via `ecs:ListTasks` and `ecs:DescribeTasks`.
+The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group. When tasks restarted in the lookback window, it also shows the **exact ECS stop reason** (`stoppedReason`, container reason, exit code).
 
-Service tiles show **Restarted N×** for that window. Hover the chip for the latest reason; open **Logs** for every stop.
+Service tiles show a **Restarted N×** chip. Hover for the latest reason; open the Logs tab for every stop event.
 
 ```json
 {
@@ -406,19 +379,19 @@ Service tiles show **Restarted N×** for that window. Hover the chip for the lat
 }
 ```
 
-Set `include_logs` or `include_restarts` to `false` to skip. Restarts do not fail the service health score by themselves.
+Set `include_logs` or `include_restarts` to `false` to skip. Restarts do not affect the overall service health score.
 
 ---
 
 ## Backends (databases, Bedrock, queues)
 
-The HTML report **Backends** tab lists data stores and AWS APIs inferred from the running task definition:
+The **Backends** tab lists data stores and AWS APIs inferred from the running task definition:
 
 - Environment values such as `DB_HOST`, `DATABASE_URL`, `REDIS_URL`, `DYNAMODB_TABLE`, `BEDROCK_MODEL_ID`, `S3_BUCKET`, queue URLs
 - Hostnames like `*.rds.amazonaws.com`, `*.cache.amazonaws.com`, `bedrock-runtime.*`
-- ARNs on env vars or `secrets.valueFrom` (RDS, DynamoDB tables, S3, SQS, SNS, Bedrock models)
+- ARNs from env vars or `secrets.valueFrom` (DynamoDB tables, RDS, S3, SQS, SNS, Bedrock models)
 
-When the identifier can be parsed, the doctor **describes** the resource (read-only): RDS/Aurora instance status, DynamoDB table status, Bedrock `GetFoundationModel`, ElastiCache, S3 `HeadBucket`, SQS, SNS, OpenSearch, DocumentDB. It does **not** invoke Bedrock models or open TCP into your VPC (that would false-fail from a laptop). Missing IAM is a per-backend warning, not a service failure.
+When an identifier can be parsed the tool **describes** the resource via a read-only AWS API: RDS/Aurora instance status, DynamoDB table status, Bedrock model availability, ElastiCache, S3 `HeadBucket`, SQS, SNS, OpenSearch, DocumentDB. It does **not** invoke Bedrock models or open TCP connections into your VPC. Missing IAM is a per-backend warning, not a service failure.
 
 ```json
 {
@@ -432,9 +405,7 @@ When the identifier can be parsed, the doctor **describes** the resource (read-o
 
 ## Config file (optional)
 
-Use a config file when you check many services regularly or need advanced options.
-
-**Minimal config** — copy and edit:
+**Minimal config:**
 
 ```json
 {
@@ -445,15 +416,14 @@ Use a config file when you check many services regularly or need advanced option
 }
 ```
 
-`region` and `expected_account_id` are optional. If you omit `expected_account_id`, the tool still runs and shows which account you're connected to. Set it when you want a safety guard (e.g. refuse to run if you're accidentally pointed at prod).
-
-You can also pass account on the CLI without a config file:
+`region` and `expected_account_id` are optional. Set `expected_account_id` when you want a safety guard — the tool refuses to run if you are accidentally pointed at the wrong account.
 
 ```bash
+# Or pass account on the CLI without a config file
 python ecs_doctor.py -c my-cluster -s my-api --account 123456789012
 ```
 
-**Advanced config** — multiple clusters, expected task counts, account safety:
+**Advanced config** — multiple clusters, expected task counts, per-service health URLs:
 
 See [`examples/config.advanced.json`](examples/config.advanced.json).
 
@@ -486,7 +456,6 @@ Account: 123456789012
   CPU: 64% average · reserved 1 vCPU
   Memory: 93% average · reserved 2 GiB
   Stable task: payments-api:16 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v2.0.0
-  Stable task: payments-api:15 — 123456789012.dkr.ecr.us-east-1.amazonaws.com/payments-api:v1.9.9
   Latest event: (service payments-api) has started 1 tasks...
 
 ==================================================
@@ -500,10 +469,10 @@ Result: 1/2 services healthy — problems found
 Generate a self-contained **ECS Service Health Report** you can open in a browser, attach to a release ticket, or share with your team:
 
 ```bash
-python ecs_doctor.py -c my-cluster -s my-api --html
+python ecs_doctor.py -c my-cluster --all-services --html
 ```
 
-Or specify a custom path:
+Or specify a path:
 
 ```bash
 python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
@@ -511,20 +480,18 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 
 ![ECS Service Health Report sample](examples/ecs_report.sample.png)
 
-The HTML report is built for **leadership scan, then drill-down**:
+The report is built for **leadership scan, then drill-down**:
 
 - KPI strip, overall health bar, and attention list of services that are not healthy
-- Per-cluster tabs: **Services**, **Target groups**, **Load balancers**, **Route 53**, **Logs**
-- Service tiles in **one row**, with full names and a **Restarted N×** chip when tasks restarted in the last 12 hours
-- Service details: full image URI, last PRIMARY deployment time (UTC), Fargate launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, known-good versions, events
-- **Logs** tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
-- Target groups, load balancers, and Route 53 records listed once per cluster
+- Per-cluster tabs: **Services · Backends · Target groups · Load balancers · Route 53 · Logs**
+- Service tiles in one row with **Restarted N×** chips and status lights
+- Service detail: full image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, backends, known-good versions, events
+- Logs tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
+- Backends tab: every inferred data store grouped by service, with live AWS status
 
-Built with **React + Vite** (`report-ui/`): teal-glass dashboard, cyan 3D pills, Amazon ECS logo, **Palatino** titles, **Calibri** / **Tahoma** body text.
+**Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser (sample data, no credentials needed).
 
-**Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser, or see the screenshot above (sample data, no AWS credentials needed).
-
-To regenerate the sample HTML and README screenshot:
+To regenerate the sample and screenshot:
 
 ```bash
 cd report-ui && npm install && npm run build && cd ..

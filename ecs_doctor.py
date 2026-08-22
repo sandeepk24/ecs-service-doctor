@@ -2390,6 +2390,7 @@ def inspect_service(
                 task_definition,
                 container_images,
                 tokens=tokens,
+                commit_limit=int(checks_config.get("cicd_commit_limit", 5)),
             )
 
         if checks_config.get("include_http_health", True):
@@ -2649,6 +2650,15 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         pipeline_url = ((cicd.get("cicd") or {}).get("pipeline_url"))
         if pipeline_url:
             lines.append(f"  Pipeline: {pipeline_url}")
+        commits = cicd.get("commits") or (cicd.get("cicd") or {}).get("commits") or []
+        for commit in commits[:3]:
+            short = commit.get("short_sha") or (commit.get("sha") or "")[:7]
+            message = commit.get("message") or "commit"
+            author = commit.get("author")
+            detail = f"{short} — {message}"
+            if author:
+                detail = f"{detail} ({author})"
+            lines.append(f"  Commit: {detail}")
 
     target_health = checks.get("target_group_health")
     if target_health:
@@ -3132,6 +3142,10 @@ def build_sample_report() -> Dict[str, Any]:
                             "branch": "main",
                             "commit": "a1b2c3d4e5f678901234567890abcdef12345678",
                             "commit_short": "a1b2c3d",
+                            "commit_message": "Fix checkout race on concurrent orders",
+                            "commit_author": "alice",
+                            "commit_authored_at": "2026-08-07T18:35:00+00:00",
+                            "commit_url": "https://github.com/acme/orders-api/commit/a1b2c3d4e5f678901234567890abcdef12345678",
                             "pipeline_id": "18420123456",
                             "build_number": "1842",
                             "pipeline_url": "https://github.com/acme/orders-api/actions/runs/18420123456",
@@ -3140,7 +3154,71 @@ def build_sample_report() -> Dict[str, Any]:
                             "source": "task_definition",
                             "status": STATUS_PASS,
                             "message": "GitHub Actions · acme/orders-api · branch main · commit a1b2c3d · build #1842 · Actions success",
+                            "commits": [
+                                {
+                                    "sha": "a1b2c3d4e5f678901234567890abcdef12345678",
+                                    "short_sha": "a1b2c3d",
+                                    "message": "Fix checkout race on concurrent orders",
+                                    "author": "alice",
+                                    "authored_at": "2026-08-07T18:35:00+00:00",
+                                    "url": "https://github.com/acme/orders-api/commit/a1b2c3d4e5f678901234567890abcdef12345678",
+                                    "branch": "main",
+                                    "source": "github",
+                                },
+                                {
+                                    "sha": "b2c3d4e5f678901234567890abcdef1234567890",
+                                    "short_sha": "b2c3d4e",
+                                    "message": "Raise inventory lock timeout",
+                                    "author": "bob",
+                                    "authored_at": "2026-08-07T12:10:00+00:00",
+                                    "url": "https://github.com/acme/orders-api/commit/b2c3d4e5f678901234567890abcdef1234567890",
+                                    "branch": "main",
+                                    "source": "github",
+                                },
+                                {
+                                    "sha": "c3d4e5f678901234567890abcdef12345678901a",
+                                    "short_sha": "c3d4e5f",
+                                    "message": "Add OpenTelemetry spans around checkout",
+                                    "author": "carol",
+                                    "authored_at": "2026-08-06T16:40:00+00:00",
+                                    "url": "https://github.com/acme/orders-api/commit/c3d4e5f678901234567890abcdef12345678901a",
+                                    "branch": "main",
+                                    "source": "github",
+                                },
+                            ],
                         },
+                        "commits": [
+                            {
+                                "sha": "a1b2c3d4e5f678901234567890abcdef12345678",
+                                "short_sha": "a1b2c3d",
+                                "message": "Fix checkout race on concurrent orders",
+                                "author": "alice",
+                                "authored_at": "2026-08-07T18:35:00+00:00",
+                                "url": "https://github.com/acme/orders-api/commit/a1b2c3d4e5f678901234567890abcdef12345678",
+                                "branch": "main",
+                                "source": "github",
+                            },
+                            {
+                                "sha": "b2c3d4e5f678901234567890abcdef1234567890",
+                                "short_sha": "b2c3d4e",
+                                "message": "Raise inventory lock timeout",
+                                "author": "bob",
+                                "authored_at": "2026-08-07T12:10:00+00:00",
+                                "url": "https://github.com/acme/orders-api/commit/b2c3d4e5f678901234567890abcdef1234567890",
+                                "branch": "main",
+                                "source": "github",
+                            },
+                            {
+                                "sha": "c3d4e5f678901234567890abcdef12345678901a",
+                                "short_sha": "c3d4e5f",
+                                "message": "Add OpenTelemetry spans around checkout",
+                                "author": "carol",
+                                "authored_at": "2026-08-06T16:40:00+00:00",
+                                "url": "https://github.com/acme/orders-api/commit/c3d4e5f678901234567890abcdef12345678901a",
+                                "branch": "main",
+                                "source": "github",
+                            },
+                        ],
                         "deployments": [
                             {
                                 "id": "ecs-svc/orders-primary",
@@ -3330,6 +3408,10 @@ def build_sample_report() -> Dict[str, Any]:
                             "branch": "release/0.9",
                             "commit": "9f8e7d6c5b4a3210fedcba0987654321abcdef01",
                             "commit_short": "9f8e7d6",
+                            "commit_message": "Tune Bedrock prompt caching for agents",
+                            "commit_author": "dana",
+                            "commit_authored_at": "2026-08-07T20:05:00+00:00",
+                            "commit_url": "https://gitlab.com/acme/agents-service/-/commit/9f8e7d6c5b4a3210fedcba0987654321abcdef01",
                             "pipeline_id": "512",
                             "build_number": "512",
                             "pipeline_url": "https://gitlab.com/acme/agents-service/-/pipelines/512",
@@ -3337,7 +3419,51 @@ def build_sample_report() -> Dict[str, Any]:
                             "source": "task_definition",
                             "status": STATUS_PASS,
                             "message": "GitLab CI · acme/agents-service · branch release/0.9 · commit 9f8e7d6 · build #512 · pipeline running",
+                            "commits": [
+                                {
+                                    "sha": "9f8e7d6c5b4a3210fedcba0987654321abcdef01",
+                                    "short_sha": "9f8e7d6",
+                                    "message": "Tune Bedrock prompt caching for agents",
+                                    "author": "dana",
+                                    "authored_at": "2026-08-07T20:05:00+00:00",
+                                    "url": "https://gitlab.com/acme/agents-service/-/commit/9f8e7d6c5b4a3210fedcba0987654321abcdef01",
+                                    "branch": "release/0.9",
+                                    "source": "gitlab",
+                                },
+                                {
+                                    "sha": "8e7d6c5b4a3210fedcba0987654321abcdef0123",
+                                    "short_sha": "8e7d6c5",
+                                    "message": "Reduce agent tool timeout to 12s",
+                                    "author": "erin",
+                                    "authored_at": "2026-08-07T09:20:00+00:00",
+                                    "url": "https://gitlab.com/acme/agents-service/-/commit/8e7d6c5b4a3210fedcba0987654321abcdef0123",
+                                    "branch": "release/0.9",
+                                    "source": "gitlab",
+                                },
+                            ],
                         },
+                        "commits": [
+                            {
+                                "sha": "9f8e7d6c5b4a3210fedcba0987654321abcdef01",
+                                "short_sha": "9f8e7d6",
+                                "message": "Tune Bedrock prompt caching for agents",
+                                "author": "dana",
+                                "authored_at": "2026-08-07T20:05:00+00:00",
+                                "url": "https://gitlab.com/acme/agents-service/-/commit/9f8e7d6c5b4a3210fedcba0987654321abcdef01",
+                                "branch": "release/0.9",
+                                "source": "gitlab",
+                            },
+                            {
+                                "sha": "8e7d6c5b4a3210fedcba0987654321abcdef0123",
+                                "short_sha": "8e7d6c5",
+                                "message": "Reduce agent tool timeout to 12s",
+                                "author": "erin",
+                                "authored_at": "2026-08-07T09:20:00+00:00",
+                                "url": "https://gitlab.com/acme/agents-service/-/commit/8e7d6c5b4a3210fedcba0987654321abcdef0123",
+                                "branch": "release/0.9",
+                                "source": "gitlab",
+                            },
+                        ],
                         "deployments": [
                             {
                                 "id": "ecs-svc/agents-primary",
@@ -3558,6 +3684,10 @@ def build_sample_report() -> Dict[str, Any]:
                             "branch": "hotfix/payments",
                             "commit": "c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
                             "commit_short": "c0ffee1",
+                            "commit_message": "Hotfix refunds idempotency key collision",
+                            "commit_author": "frank",
+                            "commit_authored_at": "2026-08-07T19:40:00+00:00",
+                            "commit_url": "https://bitbucket.org/acme/payments-api/commits/c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
                             "pipeline_id": "88",
                             "build_number": "88",
                             "pipeline_url": "https://bitbucket.org/acme/payments-api/pipelines/results/88",
@@ -3565,7 +3695,51 @@ def build_sample_report() -> Dict[str, Any]:
                             "source": "task_definition",
                             "status": STATUS_WARN,
                             "message": "Bitbucket Pipelines · acme/payments-api · branch hotfix/payments · commit c0ffee1 · build #88 · pipeline FAILED",
+                            "commits": [
+                                {
+                                    "sha": "c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+                                    "short_sha": "c0ffee1",
+                                    "message": "Hotfix refunds idempotency key collision",
+                                    "author": "frank",
+                                    "authored_at": "2026-08-07T19:40:00+00:00",
+                                    "url": "https://bitbucket.org/acme/payments-api/commits/c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+                                    "branch": "hotfix/payments",
+                                    "source": "bitbucket",
+                                },
+                                {
+                                    "sha": "d1eeff2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+                                    "short_sha": "d1eeff2",
+                                    "message": "Guard Stripe webhook signature retries",
+                                    "author": "gina",
+                                    "authored_at": "2026-08-07T15:00:00+00:00",
+                                    "url": "https://bitbucket.org/acme/payments-api/commits/d1eeff2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+                                    "branch": "hotfix/payments",
+                                    "source": "bitbucket",
+                                },
+                            ],
                         },
+                        "commits": [
+                            {
+                                "sha": "c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+                                "short_sha": "c0ffee1",
+                                "message": "Hotfix refunds idempotency key collision",
+                                "author": "frank",
+                                "authored_at": "2026-08-07T19:40:00+00:00",
+                                "url": "https://bitbucket.org/acme/payments-api/commits/c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+                                "branch": "hotfix/payments",
+                                "source": "bitbucket",
+                            },
+                            {
+                                "sha": "d1eeff2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+                                "short_sha": "d1eeff2",
+                                "message": "Guard Stripe webhook signature retries",
+                                "author": "gina",
+                                "authored_at": "2026-08-07T15:00:00+00:00",
+                                "url": "https://bitbucket.org/acme/payments-api/commits/d1eeff2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+                                "branch": "hotfix/payments",
+                                "source": "bitbucket",
+                            },
+                        ],
                         "deployments": [
                             {
                                 "id": "ecs-svc/payments-primary",

@@ -1167,7 +1167,46 @@ body {
 .backend-message {
   margin: 0.4rem 0 0;
   font-size: 0.92rem;
-  color: var(--text-2);
+  color: var(--muted);
+}
+
+.cicd-card {
+  margin: 0.55rem 0 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(60, 194, 224, 0.22);
+  background: rgba(8, 28, 38, 0.35);
+}
+
+.cicd-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #07202c;
+  background: var(--gloss);
+}
+
+.cicd-card a {
+  color: #7fe4f4;
+}
+
+html[data-theme="day"] .cicd-card {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+html[data-theme="day"] .cicd-card a {
+  color: #3f4fc9;
+}
+
+html[data-theme="day"] .cicd-pill {
+  color: #152033;
+  background: linear-gradient(180deg, #ffffff 0%, #e8ecff 100%);
 }
 
 .target-group-title {

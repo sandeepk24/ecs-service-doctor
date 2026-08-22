@@ -31,15 +31,20 @@ import {
   collectClusterBackends,
   BackendsPanel,
 } from "./components/BackendsPanel";
+import {
+  collectClusterDeployments,
+  DeploymentsPanel,
+} from "./components/DeploymentsPanel";
 import { LogsPanel } from "./components/LogsPanel";
 import { EcsLogo } from "./components/EcsLogo";
 
 type ClusterSection =
   | "services"
+  | "backends"
+  | "deployments"
   | "target-groups"
   | "load-balancers"
   | "route-53"
-  | "backends"
   | "logs";
 
 type ThemeMode = "night" | "day";
@@ -183,6 +188,7 @@ export default function App() {
             const loadBalancers = collectClusterLoadBalancers(services);
             const dnsRecords = collectClusterDnsRecords(services);
             const backends = collectClusterBackends(ordered);
+            const deployments = collectClusterDeployments(ordered);
 
             return (
               <section
@@ -204,6 +210,7 @@ export default function App() {
                     [
                       ["services", "Services", services.length],
                       ["backends", "Backends", backends.length],
+                      ["deployments", "CI/CD", deployments.length],
                       ["target-groups", "Target groups", targetGroups.length],
                       ["load-balancers", "Load balancers", loadBalancers.length],
                       ["route-53", "Route 53", dnsRecords.length],
@@ -289,6 +296,10 @@ export default function App() {
                     backends={backends}
                     serviceOrder={ordered.map((item) => item.service)}
                   />
+                )}
+
+                {section === "deployments" && (
+                  <DeploymentsPanel items={deployments} />
                 )}
 
                 {section === "logs" && (

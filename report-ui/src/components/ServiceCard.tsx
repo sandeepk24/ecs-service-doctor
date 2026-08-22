@@ -239,6 +239,11 @@ export function ServiceDetail({ item }: { item: ServiceResult }) {
           status={checks.backends?.status}
           message={checks.backends?.message}
         />
+        <CheckRow
+          label="CI/CD"
+          status={checks.cicd?.status}
+          message={checks.cicd?.message}
+        />
       </div>
 
       <StableTasksSection stableTasks={checks.stable_tasks} />

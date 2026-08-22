@@ -18,6 +18,7 @@ Checks:
 - recent stable task definitions for rollback
 - HTTP endpoint health using ALB target-group path/matcher (and notifications)
 - inferred backends (RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, and more)
+- CI/CD deployment tracking (GitHub Actions, GitLab CI, Bitbucket Pipelines, CodeBuild)
 - Slack, Microsoft Teams, webhook, and SNS alerts
 - continuous monitoring with --interval
 
@@ -46,6 +47,7 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import ClientError, ProfileNotFound
 
+from cicd import evaluate_cicd
 from notifications import (
     dispatch_notifications,
     fingerprint_unhealthy,
@@ -62,7 +64,7 @@ from topology import (
 )
 
 
-VERSION = "0.10.1"
+VERSION = "0.11.0"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -2286,7 +2288,9 @@ def inspect_service(
             "include_connectivity_diagram", True
         ) or checks_config.get("include_target_group_health", True) or checks_config.get(
             "include_cpu_memory", True
-        ) or checks_config.get("include_logs", True):
+        ) or checks_config.get("include_logs", True) or checks_config.get(
+            "include_backends", True
+        ) or checks_config.get("include_cicd", True):
             task_definition = describe_task_definition(
                 ecs_client, service["taskDefinition"]
             )
@@ -2370,6 +2374,24 @@ def inspect_service(
             inferred = infer_backends_from_task_definition(task_definition or {})
             result["checks"]["backends"] = evaluate_backends(inferred, session)
 
+        if checks_config.get("include_cicd", True):
+            tokens = {
+                "github_token": service_config.get("github_token")
+                or checks_config.get("github_token"),
+                "gitlab_token": service_config.get("gitlab_token")
+                or checks_config.get("gitlab_token"),
+                "bitbucket_username": service_config.get("bitbucket_username")
+                or checks_config.get("bitbucket_username"),
+                "bitbucket_token": service_config.get("bitbucket_token")
+                or checks_config.get("bitbucket_token"),
+            }
+            result["checks"]["cicd"] = evaluate_cicd(
+                service,
+                task_definition,
+                container_images,
+                tokens=tokens,
+            )
+
         if checks_config.get("include_http_health", True):
             connectivity = result["checks"].get("connectivity")
             target_health = result["checks"].get("target_group_health")
@@ -2440,7 +2462,13 @@ def inspect_service(
             {
                 key: value
                 for key, value in result["checks"].items()
-                if key not in {"connectivity", "stable_tasks", "logs", "restarts"}
+                if key not in {
+                    "connectivity",
+                    "stable_tasks",
+                    "logs",
+                    "restarts",
+                    "cicd",
+                }
             }
         )
 
@@ -2614,6 +2642,13 @@ def summarize_service_plain(item: Dict[str, Any]) -> List[str]:
         lines.append(f"  Deployment: {deployments.get('message', 'needs attention')}")
     else:
         lines.append(f"  Deployment: {deployments.get('message', 'problem detected')}")
+
+    cicd = checks.get("cicd") or {}
+    if cicd.get("message"):
+        lines.append(f"  CI/CD: {cicd['message']}")
+        pipeline_url = ((cicd.get("cicd") or {}).get("pipeline_url"))
+        if pipeline_url:
+            lines.append(f"  Pipeline: {pipeline_url}")
 
     target_health = checks.get("target_group_health")
     if target_health:
@@ -3085,6 +3120,42 @@ def build_sample_report() -> Dict[str, Any]:
                             },
                         ],
                     },
+                    "cicd": {
+                        "status": STATUS_PASS,
+                        "message": "GitHub Actions · acme/orders-api · branch main · commit a1b2c3d · build #1842 · ECS COMPLETED · orders-api:42",
+                        "cicd": {
+                            "provider": "github_actions",
+                            "provider_label": "GitHub Actions",
+                            "detected": True,
+                            "repository": "acme/orders-api",
+                            "project_url": "https://github.com/acme/orders-api",
+                            "branch": "main",
+                            "commit": "a1b2c3d4e5f678901234567890abcdef12345678",
+                            "commit_short": "a1b2c3d",
+                            "pipeline_id": "18420123456",
+                            "build_number": "1842",
+                            "pipeline_url": "https://github.com/acme/orders-api/actions/runs/18420123456",
+                            "actor": "deploy-bot",
+                            "pipeline_status": "success",
+                            "source": "task_definition",
+                            "status": STATUS_PASS,
+                            "message": "GitHub Actions · acme/orders-api · branch main · commit a1b2c3d · build #1842 · Actions success",
+                        },
+                        "deployments": [
+                            {
+                                "id": "ecs-svc/orders-primary",
+                                "status": "PRIMARY",
+                                "rollout_state": "COMPLETED",
+                                "task_definition": "orders-api:42",
+                                "desired": 2,
+                                "running": 2,
+                                "pending": 0,
+                                "failed_tasks": 0,
+                                "created_at": "2026-08-07T18:40:00+00:00",
+                                "updated_at": "2026-08-07T18:48:00+00:00",
+                            }
+                        ],
+                    },
                 },
             },
             {
@@ -3244,6 +3315,53 @@ def build_sample_report() -> Dict[str, Any]:
                                 "status": STATUS_PASS,
                                 "aws_status": "available",
                                 "message": "Bedrock model anthropic.claude-3-5-sonnet-20241022-v2:0 is available",
+                            },
+                        ],
+                    },
+                    "cicd": {
+                        "status": STATUS_WARN,
+                        "message": "GitLab CI · acme/agents-service · branch release/0.9 · commit 9f8e7d6 · build #512 · pipeline running · ECS IN_PROGRESS · agents-service:8",
+                        "cicd": {
+                            "provider": "gitlab_ci",
+                            "provider_label": "GitLab CI",
+                            "detected": True,
+                            "repository": "acme/agents-service",
+                            "project_url": "https://gitlab.com/acme/agents-service",
+                            "branch": "release/0.9",
+                            "commit": "9f8e7d6c5b4a3210fedcba0987654321abcdef01",
+                            "commit_short": "9f8e7d6",
+                            "pipeline_id": "512",
+                            "build_number": "512",
+                            "pipeline_url": "https://gitlab.com/acme/agents-service/-/pipelines/512",
+                            "pipeline_status": "running",
+                            "source": "task_definition",
+                            "status": STATUS_PASS,
+                            "message": "GitLab CI · acme/agents-service · branch release/0.9 · commit 9f8e7d6 · build #512 · pipeline running",
+                        },
+                        "deployments": [
+                            {
+                                "id": "ecs-svc/agents-primary",
+                                "status": "PRIMARY",
+                                "rollout_state": "IN_PROGRESS",
+                                "task_definition": "agents-service:8",
+                                "desired": 2,
+                                "running": 1,
+                                "pending": 1,
+                                "failed_tasks": 0,
+                                "created_at": "2026-08-07T20:10:00+00:00",
+                                "updated_at": "2026-08-07T20:40:00+00:00",
+                            },
+                            {
+                                "id": "ecs-svc/agents-active",
+                                "status": "ACTIVE",
+                                "rollout_state": "COMPLETED",
+                                "task_definition": "agents-service:7",
+                                "desired": 1,
+                                "running": 1,
+                                "pending": 0,
+                                "failed_tasks": 0,
+                                "created_at": "2026-08-06T11:00:00+00:00",
+                                "updated_at": "2026-08-06T11:12:00+00:00",
                             },
                         ],
                     },
@@ -3426,6 +3544,41 @@ def build_sample_report() -> Dict[str, Any]:
                                 "engine": "aurora-postgresql",
                                 "message": "RDS instance payments-db is configuring-enhanced-monitoring",
                             },
+                        ],
+                    },
+                    "cicd": {
+                        "status": STATUS_WARN,
+                        "message": "Bitbucket Pipelines · acme/payments-api · branch hotfix/payments · commit c0ffee1 · build #88 · pipeline FAILED · ECS IN_PROGRESS · payments-api:17",
+                        "cicd": {
+                            "provider": "bitbucket_pipelines",
+                            "provider_label": "Bitbucket Pipelines",
+                            "detected": True,
+                            "repository": "acme/payments-api",
+                            "project_url": "https://bitbucket.org/acme/payments-api",
+                            "branch": "hotfix/payments",
+                            "commit": "c0ffee1a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+                            "commit_short": "c0ffee1",
+                            "pipeline_id": "88",
+                            "build_number": "88",
+                            "pipeline_url": "https://bitbucket.org/acme/payments-api/pipelines/results/88",
+                            "pipeline_status": "FAILED",
+                            "source": "task_definition",
+                            "status": STATUS_WARN,
+                            "message": "Bitbucket Pipelines · acme/payments-api · branch hotfix/payments · commit c0ffee1 · build #88 · pipeline FAILED",
+                        },
+                        "deployments": [
+                            {
+                                "id": "ecs-svc/payments-primary",
+                                "status": "PRIMARY",
+                                "rollout_state": "IN_PROGRESS",
+                                "task_definition": "payments-api:17",
+                                "desired": 2,
+                                "running": 1,
+                                "pending": 0,
+                                "failed_tasks": 1,
+                                "created_at": "2026-08-07T19:50:00+00:00",
+                                "updated_at": "2026-08-07T20:45:00+00:00",
+                            }
                         ],
                     },
                 },

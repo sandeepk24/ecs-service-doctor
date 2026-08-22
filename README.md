@@ -4,7 +4,7 @@
 
 ECS can report a service as stable while your app is still broken: tasks crash-looping after a deploy, load balancer targets failing health checks, the wrong container image running, or the service unable to reach its databases and backends.
 
-This tool checks **applications hosted on AWS ECS** — not just cluster metrics. It validates what matters after every deploy: task counts, **CPU and memory**, rollout state, target group health, **the same HTTP checks your ALB runs**, recent ECS events, **CloudWatch logs**, **task restarts with the exact stop reason**, **inferred backends** (RDS, DynamoDB, Bedrock, ElastiCache, S3, and more), container images, and **the last stable task definitions** so you can roll back in one command.
+This tool checks **applications hosted on AWS ECS** — not just cluster metrics. It validates what matters after every deploy: task counts, **CPU and memory**, rollout state, target group health, **the same HTTP checks your ALB runs**, recent ECS events, **CloudWatch logs**, **task restarts with the exact stop reason**, **inferred backends** (RDS, DynamoDB, Bedrock, ElastiCache, S3, and more), **CI/CD deployment metadata** from GitHub, GitLab, or Bitbucket, container images, and **the last stable task definitions** so you can roll back in one command.
 
 ---
 
@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything included today (**v0.10.1**):
+Everything included today (**v0.11.0**):
 
 ### Application health checks
 
@@ -51,10 +51,11 @@ Shareable, self-contained HTML — no external assets, open in any browser offli
 - **Day / Night theme toggle** — midnight navy glass by default; switch to a bright pastel frosted-glass day mode
 - **KPI strip and health bar** — services, tasks, targets, deployments at a glance
 - **Needs attention** — only the services that are not healthy, with a jump link
-- **Cluster tabs** — **Services · Backends · Target groups · Load balancers · Route 53 · Logs**
+- **Cluster tabs** — **Services · Backends · CI/CD · Target groups · Load balancers · Route 53 · Logs**
 - **Service tiles** — one row per cluster; status, tasks/targets; **Restarted N×** chip when tasks restarted in the last 12 hours
-- **Service detail** — image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, known-good versions, events
+- **Service detail** — image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, CI/CD, known-good versions, events
 - **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and more — inferred from task-definition env vars, URIs, and ARNs, with AWS resource status when IAM allows
+- **CI/CD tab** — GitHub Actions, GitLab CI, Bitbucket Pipelines, CodeBuild, CircleCI, and Jenkins signals from the task definition, with ECS deployment rollout history and pipeline links
 - **Logs tab** — CloudWatch lines plus the exact stop reason for each recent restart
 - **Target groups tab** — health-check path/matcher, healthy/unhealthy counts per group
 - **Load balancers tab** — ALB/NLB details, listeners, SSL policy, host-header rules
@@ -267,6 +268,7 @@ Alerts include the cluster/service, HTTP status and URL when available, and a sh
 | **Restarts** | Stopped tasks in the last 12 hours — count, `stoppedReason`, container reason, exit code |
 | **Logs** | Recent CloudWatch `awslogs` lines |
 | **Backends** | RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch and more — inferred from env vars and ARNs, with AWS status when IAM allows |
+| **CI/CD** | GitHub Actions / GitLab CI / Bitbucket Pipelines / CodeBuild metadata from the task definition, plus ECS deployment rollout history and pipeline links |
 | **Stable tasks** | Last 3 known-good task definitions with image tag and a copy-paste rollback command |
 | **HTTP** | App URL checked against target-group path and success codes |
 | **Endpoints** | Host-header rules and matching Route 53 names — separate HTTP check per hostname |
@@ -403,6 +405,52 @@ When an identifier can be parsed the tool **describes** the resource via a read-
 
 ---
 
+## CI/CD deployments (GitHub, GitLab, Bitbucket)
+
+The HTML report **CI/CD** tab tracks what shipped each service and how the ECS rollout is going.
+
+**Detected from the running task definition** (bake these into your image or task env at build time):
+
+| Provider | Signals |
+|----------|---------|
+| **GitHub Actions** | `GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER` |
+| **GitLab CI** | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_COMMIT_SHA`, `CI_COMMIT_REF_NAME`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL` |
+| **Bitbucket Pipelines** | `BITBUCKET_REPO_FULL_NAME`, `BITBUCKET_COMMIT`, `BITBUCKET_BRANCH`, `BITBUCKET_BUILD_NUMBER`, `BITBUCKET_PIPELINE_UUID` |
+| **AWS CodeBuild** | `CODEBUILD_BUILD_ID`, `CODEBUILD_SOURCE_REPO_URL`, `CODEBUILD_RESOLVED_SOURCE_VERSION` |
+| **CircleCI / Jenkins** | `CIRCLE_BUILD_URL`, `BUILD_URL`, `GIT_COMMIT`, `GIT_BRANCH` |
+
+Also reads OCI labels such as `org.opencontainers.image.source` / `revision`, and git-SHA image tags.
+
+For each service the tab shows:
+
+- Provider, repository, branch, commit, build/pipeline number
+- Link to the pipeline run when a URL can be built
+- ECS deployment history (PRIMARY / ACTIVE, rollout state, task definition, task counts)
+
+**Optional live status** (read-only HTTP APIs — never required):
+
+| Token | Used for |
+|-------|----------|
+| `GITHUB_TOKEN` / `GH_TOKEN` or config `checks.github_token` | GitHub Actions run / commit status |
+| `GITLAB_TOKEN` or `checks.gitlab_token` | GitLab pipeline status |
+| `BITBUCKET_USERNAME` + `BITBUCKET_TOKEN` (or app password) | Bitbucket pipeline status |
+
+```json
+{
+  "checks": {
+    "include_cicd": true,
+    "github_token": null,
+    "gitlab_token": null,
+    "bitbucket_username": null,
+    "bitbucket_token": null
+  }
+}
+```
+
+Missing tokens only skip the live probe — CI metadata from the task definition still appears.
+
+---
+
 ## Config file (optional)
 
 **Minimal config:**
@@ -483,11 +531,12 @@ python ecs_doctor.py -c my-cluster -s my-api --html my-report.html
 The report is built for **leadership scan, then drill-down**:
 
 - KPI strip, overall health bar, and attention list of services that are not healthy
-- Per-cluster tabs: **Services · Backends · Target groups · Load balancers · Route 53 · Logs**
+- Per-cluster tabs: **Services · Backends · CI/CD · Target groups · Load balancers · Route 53 · Logs**
 - Service tiles in one row with **Restarted N×** chips and status lights
-- Service detail: full image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, backends, known-good versions, events
+- Service detail: full image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, backends, CI/CD, known-good versions, events
 - Logs tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
 - Backends tab: every inferred data store grouped by service, with live AWS status
+- CI/CD tab: GitHub / GitLab / Bitbucket / CodeBuild metadata plus ECS rollout history and pipeline links
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser (sample data, no credentials needed).
 

@@ -86,6 +86,15 @@ CI_ENV_KEYS = {
     "REPOSITORY_URL",
     "CI_COMMIT",
     "CI_BRANCH",
+    "CI_COMMIT_MESSAGE",
+    "CI_COMMIT_TITLE",
+    "CI_COMMIT_DESCRIPTION",
+    "CI_COMMIT_AUTHOR",
+    "CI_COMMIT_AUTHOR_NAME",
+    "COMMIT_MESSAGE",
+    "GIT_COMMIT_MESSAGE",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
     "PIPELINE_URL",
     "BUILD_ID",
 }
@@ -355,7 +364,49 @@ def infer_cicd_from_task_definition(
             "provider_label": "",
             "detected": False,
             "signals": [],
+            "commits": [],
         }
+
+    commit_message = _first(
+        env,
+        "CI_COMMIT_MESSAGE",
+        "CI_COMMIT_TITLE",
+        "COMMIT_MESSAGE",
+        "GIT_COMMIT_MESSAGE",
+        "CI_COMMIT_DESCRIPTION",
+    )
+    if commit_message:
+        commit_message = " ".join(commit_message.split())[:240]
+    commit_author = _first(
+        env,
+        "CI_COMMIT_AUTHOR",
+        "CI_COMMIT_AUTHOR_NAME",
+        "GIT_AUTHOR_NAME",
+        "GITHUB_ACTOR",
+    )
+    commit_url = ""
+    if provider in {"github_actions", "github"} and repo and commit:
+        server = _first(env, "GITHUB_SERVER_URL") or "https://github.com"
+        commit_url = f"{server.rstrip('/')}/{repo}/commit/{commit}"
+    elif provider in {"gitlab_ci", "gitlab"} and project_url and commit:
+        commit_url = f"{project_url.rstrip('/')}/-/commit/{commit}"
+    elif provider in {"bitbucket_pipelines", "bitbucket"} and project_url and commit:
+        commit_url = f"{project_url.rstrip('/')}/commits/{commit}"
+
+    commits: List[Dict[str, Any]] = []
+    if commit:
+        commits.append(
+            {
+                "sha": commit,
+                "short_sha": _short_sha(commit),
+                "message": commit_message,
+                "author": commit_author or actor,
+                "authored_at": "",
+                "url": commit_url,
+                "branch": branch,
+                "source": "task_definition",
+            }
+        )
 
     return {
         "provider": provider or "ci",
@@ -366,12 +417,16 @@ def infer_cicd_from_task_definition(
         "branch": branch,
         "commit": commit,
         "commit_short": _short_sha(commit),
+        "commit_message": commit_message,
+        "commit_author": commit_author or actor,
+        "commit_url": commit_url,
         "pipeline_id": pipeline_id,
         "build_number": build_number,
         "pipeline_url": pipeline_url,
         "actor": actor,
         "signals": signals[:20],
         "source": "task_definition",
+        "commits": commits,
     }
 
 
@@ -522,14 +577,235 @@ def enrich_cicd_status(
     return item
 
 
+def _normalize_commit(
+    sha: str,
+    message: str = "",
+    author: str = "",
+    authored_at: str = "",
+    url: str = "",
+    branch: str = "",
+    source: str = "api",
+) -> Dict[str, Any]:
+    return {
+        "sha": sha,
+        "short_sha": _short_sha(sha),
+        "message": " ".join((message or "").split())[:240],
+        "author": author,
+        "authored_at": authored_at,
+        "url": url,
+        "branch": branch,
+        "source": source,
+    }
+
+
+def enrich_commit_history(
+    cicd: Dict[str, Any],
+    tokens: Optional[Dict[str, str]] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    """Fetch the deployed commit and recent branch commits from GitHub/GitLab/Bitbucket."""
+    item = dict(cicd or {})
+    commits: List[Dict[str, Any]] = list(item.get("commits") or [])
+    if not item.get("detected") or not item.get("repository"):
+        item["commits"] = commits
+        return item
+
+    tokens = tokens or {}
+    provider = item.get("provider") or ""
+    repo = str(item.get("repository") or "")
+    sha = str(item.get("commit") or "")
+    branch = str(item.get("branch") or "")
+    limit = max(1, min(int(limit or 5), 10))
+
+    github_token = tokens.get("github_token") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    gitlab_token = tokens.get("gitlab_token") or os.environ.get("GITLAB_TOKEN")
+    bitbucket_user = tokens.get("bitbucket_username") or os.environ.get("BITBUCKET_USERNAME")
+    bitbucket_token = (
+        tokens.get("bitbucket_token")
+        or os.environ.get("BITBUCKET_TOKEN")
+        or os.environ.get("BITBUCKET_APP_PASSWORD")
+    )
+
+    fetched: List[Dict[str, Any]] = []
+
+    if provider in {"github_actions", "github"} and github_token:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "User-Agent": "ecs-service-doctor",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if sha and not item.get("commit_message"):
+            payload, _error = _http_json(
+                f"https://api.github.com/repos/{repo}/commits/{sha}",
+                headers,
+            )
+            if payload:
+                commit_body = payload.get("commit") or {}
+                author = ((commit_body.get("author") or {}).get("name")) or (
+                    (payload.get("author") or {}).get("login") or ""
+                )
+                item["commit_message"] = (commit_body.get("message") or "").split("\n")[0][:240]
+                item["commit_author"] = author
+                item["commit_authored_at"] = (commit_body.get("author") or {}).get("date") or ""
+                item["commit_url"] = payload.get("html_url") or item.get("commit_url")
+        ref = branch or sha
+        if ref:
+            payload, _error = _http_json(
+                f"https://api.github.com/repos/{repo}/commits?sha={quote(ref)}&per_page={limit}",
+                headers,
+            )
+            rows = payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
+            if isinstance(rows, list):
+                for row in rows[:limit]:
+                    commit_body = row.get("commit") or {}
+                    author = ((commit_body.get("author") or {}).get("name")) or (
+                        (row.get("author") or {}).get("login") or ""
+                    )
+                    fetched.append(
+                        _normalize_commit(
+                            sha=str(row.get("sha") or ""),
+                            message=(commit_body.get("message") or "").split("\n")[0],
+                            author=author,
+                            authored_at=(commit_body.get("author") or {}).get("date") or "",
+                            url=str(row.get("html_url") or ""),
+                            branch=branch,
+                            source="github",
+                        )
+                    )
+
+    elif provider in {"gitlab_ci", "gitlab"} and gitlab_token:
+        project = quote(repo, safe="")
+        server = "https://gitlab.com"
+        if item.get("project_url"):
+            parts = str(item["project_url"]).rstrip("/").split("/")
+            if len(parts) >= 3:
+                server = "/".join(parts[:3])
+        headers = {
+            "PRIVATE-TOKEN": gitlab_token,
+            "User-Agent": "ecs-service-doctor",
+        }
+        if sha and not item.get("commit_message"):
+            payload, _error = _http_json(
+                f"{server}/api/v4/projects/{project}/repository/commits/{sha}",
+                headers,
+            )
+            if payload:
+                item["commit_message"] = str(payload.get("title") or payload.get("message") or "")[:240]
+                item["commit_author"] = str(payload.get("author_name") or "")
+                item["commit_authored_at"] = str(payload.get("authored_date") or payload.get("created_at") or "")
+                item["commit_url"] = str(payload.get("web_url") or item.get("commit_url") or "")
+        ref = branch or sha
+        if ref:
+            payload, _error = _http_json(
+                f"{server}/api/v4/projects/{project}/repository/commits?ref_name={quote(ref)}&per_page={limit}",
+                headers,
+            )
+            rows = payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
+            if isinstance(rows, list):
+                for row in rows[:limit]:
+                    fetched.append(
+                        _normalize_commit(
+                            sha=str(row.get("id") or ""),
+                            message=str(row.get("title") or row.get("message") or ""),
+                            author=str(row.get("author_name") or ""),
+                            authored_at=str(row.get("authored_date") or row.get("created_at") or ""),
+                            url=str(row.get("web_url") or ""),
+                            branch=branch,
+                            source="gitlab",
+                        )
+                    )
+
+    elif (
+        provider in {"bitbucket_pipelines", "bitbucket"}
+        and bitbucket_user
+        and bitbucket_token
+    ):
+        import base64
+
+        auth = base64.b64encode(f"{bitbucket_user}:{bitbucket_token}".encode()).decode()
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Accept": "application/json",
+            "User-Agent": "ecs-service-doctor",
+        }
+        if sha and not item.get("commit_message"):
+            payload, _error = _http_json(
+                f"https://api.bitbucket.org/2.0/repositories/{repo}/commit/{sha}",
+                headers,
+            )
+            if payload:
+                item["commit_message"] = str(payload.get("message") or "").split("\n")[0][:240]
+                item["commit_author"] = str(
+                    ((payload.get("author") or {}).get("user") or {}).get("display_name")
+                    or (payload.get("author") or {}).get("raw")
+                    or ""
+                )
+                item["commit_authored_at"] = str(payload.get("date") or "")
+                links = ((payload.get("links") or {}).get("html") or {})
+                item["commit_url"] = str(links.get("href") or item.get("commit_url") or "")
+        ref = branch or sha
+        if ref:
+            payload, _error = _http_json(
+                f"https://api.bitbucket.org/2.0/repositories/{repo}/commits/?include={quote(ref)}&pagelen={limit}",
+                headers,
+            )
+            rows = (payload or {}).get("values") if isinstance(payload, dict) else None
+            if isinstance(rows, list):
+                for row in rows[:limit]:
+                    links = ((row.get("links") or {}).get("html") or {})
+                    fetched.append(
+                        _normalize_commit(
+                            sha=str(row.get("hash") or ""),
+                            message=str(row.get("message") or "").split("\n")[0],
+                            author=str(
+                                ((row.get("author") or {}).get("user") or {}).get("display_name")
+                                or (row.get("author") or {}).get("raw")
+                                or ""
+                            ),
+                            authored_at=str(row.get("date") or ""),
+                            url=str(links.get("href") or ""),
+                            branch=branch,
+                            source="bitbucket",
+                        )
+                    )
+
+    if fetched:
+        # Prefer API history; keep task-definition commit first if missing from fetch.
+        seen = {entry["sha"] for entry in fetched if entry.get("sha")}
+        merged = list(fetched)
+        for entry in commits:
+            if entry.get("sha") and entry["sha"] not in seen:
+                merged.insert(0, entry)
+        item["commits"] = merged[:limit]
+        if item.get("commit_message") and item.get("commit_short"):
+            item["message"] = (
+                f"{item.get('message')} · \"{item['commit_message']}\""
+                if item.get("message")
+                else item["commit_message"]
+            )
+    else:
+        # Refresh primary commit entry with any enriched fields.
+        if commits:
+            commits[0]["message"] = item.get("commit_message") or commits[0].get("message")
+            commits[0]["author"] = item.get("commit_author") or commits[0].get("author")
+            commits[0]["authored_at"] = item.get("commit_authored_at") or commits[0].get("authored_at")
+            commits[0]["url"] = item.get("commit_url") or commits[0].get("url")
+        item["commits"] = commits
+
+    return item
+
+
 def evaluate_cicd(
     service: Dict[str, Any],
     task_definition: Optional[Dict[str, Any]],
     container_images: Optional[List[Dict[str, str]]] = None,
     tokens: Optional[Dict[str, str]] = None,
+    commit_limit: int = 5,
 ) -> Dict[str, Any]:
     cicd = infer_cicd_from_task_definition(task_definition, container_images)
     cicd = enrich_cicd_status(cicd, tokens=tokens)
+    cicd = enrich_commit_history(cicd, tokens=tokens, limit=commit_limit)
 
     deployments = []
     for deployment in service.get("deployments", []):
@@ -572,5 +848,6 @@ def evaluate_cicd(
         "status": status,
         "message": " · ".join(part for part in message_parts if part),
         "cicd": cicd,
+        "commits": cicd.get("commits") or [],
         "deployments": deployments,
     }

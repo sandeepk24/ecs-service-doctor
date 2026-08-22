@@ -64,7 +64,7 @@ from topology import (
 )
 
 
-VERSION = "0.11.1"
+VERSION = "0.11.2"
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -3942,6 +3942,12 @@ def build_sample_report() -> Dict[str, Any]:
         elif name == "agents-service":
             log_events = [
                 {
+                    "timestamp": "2026-08-07T19:55:30+00:00",
+                    "stream": "ecs/agents-service/def456",
+                    "container": "agents-service",
+                    "message": "WARN Bedrock InvokeModel latency above 2s threshold",
+                },
+                {
                     "timestamp": "2026-08-07T19:55:08+00:00",
                     "stream": "ecs/agents-service/def456",
                     "container": "agents-service",
@@ -3969,12 +3975,16 @@ def build_sample_report() -> Dict[str, Any]:
                     "message": "INFO GET /health 200 4ms",
                 },
             ]
+        lookback = 30
+        enriched = enrich_log_events(log_events)
+        summary = summarize_log_events(enriched)
         item["checks"]["logs"] = {
-            "status": STATUS_PASS,
-            "message": f"{len(log_events)} log line(s) from {log_group}",
+            "status": logs_check_status(summary),
+            "message": f"{leadership_log_headline(summary, lookback)} · {log_group}",
             "log_groups": [log_group],
-            "events": log_events,
-            "lookback_minutes": 30,
+            "events": enriched,
+            "summary": summary,
+            "lookback_minutes": lookback,
         }
         if name == "payments-api":
             item["checks"]["restarts"] = {

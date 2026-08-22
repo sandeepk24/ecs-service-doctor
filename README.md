@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything included today (**v0.11.1**):
+Everything included today (**v0.11.2**):
 
 ### Application health checks
 
@@ -56,7 +56,7 @@ Shareable, self-contained HTML — no external assets, open in any browser offli
 - **Service detail** — image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, CI/CD, known-good versions, events
 - **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and more — inferred from task-definition env vars, URIs, and ARNs, with AWS resource status when IAM allows
 - **CI/CD tab** — GitHub Actions, GitLab CI, Bitbucket Pipelines, CodeBuild, CircleCI, and Jenkins signals from the task definition, with **recent commits** (message, author, link), ECS deployment rollout history, and pipeline links
-- **Logs tab** — CloudWatch lines plus the exact stop reason for each recent restart
+- **Logs tab** — CloudWatch lines grouped for leadership: errors and warnings first, plain-language summaries, raw lines underneath, plus the exact stop reason for each recent restart
 - **Target groups tab** — health-check path/matcher, healthy/unhealthy counts per group
 - **Load balancers tab** — ALB/NLB details, listeners, SSL policy, host-header rules
 - **Route 53 tab** — DNS records pointing at cluster load balancers (CloudFront and CNAME chains included)
@@ -266,7 +266,7 @@ Alerts include the cluster/service, HTTP status and URL when available, and a sh
 | **Container image** | Which image/tag is actually deployed |
 | **Recent events** | Latest ECS error messages (placement failures, health check failures, etc.) |
 | **Restarts** | Stopped tasks in the last 12 hours — count, `stoppedReason`, container reason, exit code |
-| **Logs** | Recent CloudWatch `awslogs` lines |
+| **Logs** | Recent CloudWatch `awslogs` lines, sorted with errors and warnings first |
 | **Backends** | RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch and more — inferred from env vars and ARNs, with AWS status when IAM allows |
 | **CI/CD** | GitHub Actions / GitLab CI / Bitbucket Pipelines / CodeBuild metadata from the task definition, recent commits (message/author/link), plus ECS deployment rollout history and pipeline links |
 | **Stable tasks** | Last 3 known-good task definitions with image tag and a copy-paste rollback command |
@@ -365,7 +365,11 @@ If CloudWatch has no datapoints yet, reserved size still shows and the service i
 
 ## Logs and restarts
 
-The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group. When tasks restarted in the lookback window, it also shows the **exact ECS stop reason** (`stoppedReason`, container reason, exit code).
+The HTML report **Logs** tab shows recent CloudWatch log lines from each service's `awslogs` group. Lines are **classified as error, warning, or routine**, sorted so attention-worthy entries appear first, and shown with a **plain-language summary** above the raw CloudWatch text — easier for leadership and incident reviews.
+
+When tasks restarted in the lookback window, the tab also shows the **exact ECS stop reason** (`stoppedReason`, container reason, exit code).
+
+Services with log errors or warnings are **listed first** in the sidebar, with chips like `2 errors`. A cluster banner summarizes how many issues were found across all services.
 
 Service tiles show a **Restarted N×** chip. Hover for the latest reason; open the Logs tab for every stop event.
 
@@ -697,7 +701,7 @@ The report is built for **leadership scan, then drill-down**:
 - Per-cluster tabs: **Services · Backends · CI/CD · Target groups · Load balancers · Route 53 · Logs**
 - Service tiles in one row with **Restarted N×** chips and status lights
 - Service detail: full image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, backends, CI/CD, known-good versions, events
-- Logs tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
+- Logs tab: CloudWatch lines grouped by severity with plain-language summaries, plus the exact AWS stop reason for each recent restart
 - Backends tab: every inferred data store grouped by service, with live AWS status
 - CI/CD tab: GitHub / GitLab / Bitbucket / CodeBuild metadata, recent commits, ECS rollout history, and pipeline links
 

@@ -2,6 +2,17 @@ import type { ReportCheck, ServiceResult, Status } from "../types";
 import { formatTimestamp, statusLabel } from "../utils";
 import { StatusBadge } from "./StatusBadge";
 
+export interface CommitInfo {
+  sha?: string;
+  short_sha?: string;
+  message?: string;
+  author?: string;
+  authored_at?: string;
+  url?: string;
+  branch?: string;
+  source?: string;
+}
+
 export interface CicdInfo {
   provider?: string;
   provider_label?: string;
@@ -11,6 +22,10 @@ export interface CicdInfo {
   branch?: string;
   commit?: string;
   commit_short?: string;
+  commit_message?: string;
+  commit_author?: string;
+  commit_authored_at?: string;
+  commit_url?: string;
   pipeline_id?: string;
   build_number?: string;
   pipeline_url?: string;
@@ -18,6 +33,7 @@ export interface CicdInfo {
   pipeline_status?: string;
   message?: string;
   status?: Status;
+  commits?: CommitInfo[];
 }
 
 export interface EcsDeployment {
@@ -40,6 +56,7 @@ export interface ClusterDeployment {
   message?: string;
   status?: Status;
   cicd?: CicdInfo;
+  commits: CommitInfo[];
   deployments: EcsDeployment[];
 }
 
@@ -50,12 +67,17 @@ export function collectClusterDeployments(
     const check = item.checks?.cicd as
       | (ReportCheck & {
           cicd?: CicdInfo;
+          commits?: CommitInfo[];
           deployments?: EcsDeployment[];
         })
       | undefined;
     const legacy = item.checks?.deployments as
       | (ReportCheck & { deployments?: EcsDeployment[] })
       | undefined;
+    const commits =
+      check?.commits?.length
+        ? check.commits
+        : check?.cicd?.commits ?? [];
     return {
       key: `${item.cluster}::${item.service}`,
       service: item.service,
@@ -63,6 +85,7 @@ export function collectClusterDeployments(
       message: check?.message || legacy?.message,
       status: check?.status || legacy?.status,
       cicd: check?.cicd,
+      commits,
       deployments: check?.deployments?.length
         ? check.deployments
         : legacy?.deployments ?? [],
@@ -123,10 +146,23 @@ export function DeploymentsPanel({ items }: Props) {
                       <span>{cicd.repository}</span>
                     ))}
                   {cicd.branch && <span>branch {cicd.branch}</span>}
-                  {cicd.commit_short && <span>commit {cicd.commit_short}</span>}
+                  {cicd.commit_short &&
+                    (cicd.commit_url ? (
+                      <a href={cicd.commit_url} target="_blank" rel="noreferrer">
+                        commit {cicd.commit_short}
+                      </a>
+                    ) : (
+                      <span>commit {cicd.commit_short}</span>
+                    ))}
                   {cicd.build_number && <span>build #{cicd.build_number}</span>}
                   {cicd.actor && <span>by {cicd.actor}</span>}
                 </div>
+                {cicd.commit_message && (
+                  <p className="backend-message">
+                    “{cicd.commit_message}”
+                    {cicd.commit_author ? ` — ${cicd.commit_author}` : ""}
+                  </p>
+                )}
                 {cicd.pipeline_url && (
                   <p className="backend-message">
                     <a href={cicd.pipeline_url} target="_blank" rel="noreferrer">
@@ -143,6 +179,47 @@ export function DeploymentsPanel({ items }: Props) {
                 <code>BITBUCKET_*</code> env vars into the image build to track
                 deployments here.
               </p>
+            )}
+
+            {item.commits.length > 0 && (
+              <div className="commit-list-wrap">
+                <div className="backend-service-head">
+                  <h5>Commits</h5>
+                  <em>
+                    {item.commits.length} recent
+                  </em>
+                </div>
+                <ul className="commit-list">
+                  {item.commits.map((commit) => (
+                    <li key={commit.sha || commit.short_sha} className="commit-item">
+                      <div className="commit-item-top">
+                        {commit.url ? (
+                          <a
+                            href={commit.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="commit-sha"
+                          >
+                            {commit.short_sha || (commit.sha || "").slice(0, 7)}
+                          </a>
+                        ) : (
+                          <code className="commit-sha">
+                            {commit.short_sha || (commit.sha || "").slice(0, 7)}
+                          </code>
+                        )}
+                        <strong>{commit.message || "No commit message"}</strong>
+                      </div>
+                      <div className="target-group-meta">
+                        {commit.author && <span>{commit.author}</span>}
+                        {commit.authored_at && (
+                          <span>{formatTimestamp(commit.authored_at)}</span>
+                        )}
+                        {commit.branch && <span>{commit.branch}</span>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
 
             {item.deployments.length > 0 && (

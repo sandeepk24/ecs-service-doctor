@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything included today (**v0.11.0**):
+Everything included today (**v0.11.1**):
 
 ### Application health checks
 
@@ -55,7 +55,7 @@ Shareable, self-contained HTML — no external assets, open in any browser offli
 - **Service tiles** — one row per cluster; status, tasks/targets; **Restarted N×** chip when tasks restarted in the last 12 hours
 - **Service detail** — image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, app health, endpoints, backends, CI/CD, known-good versions, events
 - **Backends tab** — RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch, and more — inferred from task-definition env vars, URIs, and ARNs, with AWS resource status when IAM allows
-- **CI/CD tab** — GitHub Actions, GitLab CI, Bitbucket Pipelines, CodeBuild, CircleCI, and Jenkins signals from the task definition, with ECS deployment rollout history and pipeline links
+- **CI/CD tab** — GitHub Actions, GitLab CI, Bitbucket Pipelines, CodeBuild, CircleCI, and Jenkins signals from the task definition, with **recent commits** (message, author, link), ECS deployment rollout history, and pipeline links
 - **Logs tab** — CloudWatch lines plus the exact stop reason for each recent restart
 - **Target groups tab** — health-check path/matcher, healthy/unhealthy counts per group
 - **Load balancers tab** — ALB/NLB details, listeners, SSL policy, host-header rules
@@ -268,7 +268,7 @@ Alerts include the cluster/service, HTTP status and URL when available, and a sh
 | **Restarts** | Stopped tasks in the last 12 hours — count, `stoppedReason`, container reason, exit code |
 | **Logs** | Recent CloudWatch `awslogs` lines |
 | **Backends** | RDS, DynamoDB, Bedrock, ElastiCache, S3, SQS, SNS, OpenSearch and more — inferred from env vars and ARNs, with AWS status when IAM allows |
-| **CI/CD** | GitHub Actions / GitLab CI / Bitbucket Pipelines / CodeBuild metadata from the task definition, plus ECS deployment rollout history and pipeline links |
+| **CI/CD** | GitHub Actions / GitLab CI / Bitbucket Pipelines / CodeBuild metadata from the task definition, recent commits (message/author/link), plus ECS deployment rollout history and pipeline links |
 | **Stable tasks** | Last 3 known-good task definitions with image tag and a copy-paste rollback command |
 | **HTTP** | App URL checked against target-group path and success codes |
 | **Endpoints** | Host-header rules and matching Route 53 names — separate HTTP check per hostname |
@@ -432,9 +432,49 @@ You should see something like:
   Deployment: finished
   CI/CD: GitHub Actions · acme/orders-api · branch main · commit a1b2c3d · build #1842 · ECS COMPLETED · orders-api:42
   Pipeline: https://github.com/acme/orders-api/actions/runs/18420123456
+  Commit: a1b2c3d — Fix checkout race on concurrent orders (alice)
+  Commit: b2c3d4e — Raise inventory lock timeout (bob)
 ```
 
 If no CI signals are present, ECS deployment history still shows; the tab explains which env vars to add.
+
+### Track commits
+
+The doctor tracks the **deployed commit** and, when a token is available, **recent commits on that branch**.
+
+**From the task definition** (always works without API tokens):
+
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_SHA` / `CI_COMMIT_SHA` / `BITBUCKET_COMMIT` | Commit SHA that was deployed |
+| `CI_COMMIT_MESSAGE` / `COMMIT_MESSAGE` / `GIT_COMMIT_MESSAGE` | Commit subject line |
+| `CI_COMMIT_AUTHOR` / `GIT_AUTHOR_NAME` / `GITHUB_ACTOR` | Author display name |
+
+Example — add the message when registering the task definition (GitHub Actions):
+
+```yaml
+--arg msg "${{ github.event.head_commit.message }}" \
+# …
+{"name":"CI_COMMIT_MESSAGE","value":$msg},
+{"name":"GITHUB_SHA","value":$sha},
+```
+
+**With a token** (optional live history):
+
+- `GITHUB_TOKEN` — loads the commit details and the last N commits on the branch from the GitHub API
+- `GITLAB_TOKEN` — same for GitLab
+- `BITBUCKET_USERNAME` + `BITBUCKET_TOKEN` — same for Bitbucket
+
+```json
+{
+  "checks": {
+    "include_cicd": true,
+    "cicd_commit_limit": 5
+  }
+}
+```
+
+In the HTML **CI/CD** tab each service shows a **Commits** list with short SHA (linked), message, author, and time.
 
 ### Step 1 — pass CI env vars into the ECS task definition
 
@@ -561,6 +601,7 @@ python ecs_doctor.py -c my-cluster --all-services --html
 {
   "checks": {
     "include_cicd": true,
+    "cicd_commit_limit": 5,
     "github_token": null,
     "gitlab_token": null,
     "bitbucket_username": null,
@@ -569,7 +610,7 @@ python ecs_doctor.py -c my-cluster --all-services --html
 }
 ```
 
-Set `include_cicd` to `false` to skip. Missing tokens only skip the live probe — CI metadata from the task definition still appears.
+Set `include_cicd` to `false` to skip. Missing tokens only skip live pipeline/commit probes — CI metadata from the task definition still appears.
 
 ---
 
@@ -658,7 +699,7 @@ The report is built for **leadership scan, then drill-down**:
 - Service detail: full image URI, last PRIMARY deployment time, launch details, capacity, CPU, memory, traffic, HTTP health, endpoints, backends, CI/CD, known-good versions, events
 - Logs tab: CloudWatch lines plus the exact AWS stop reason for each recent restart
 - Backends tab: every inferred data store grouped by service, with live AWS status
-- CI/CD tab: GitHub / GitLab / Bitbucket / CodeBuild metadata plus ECS rollout history and pipeline links
+- CI/CD tab: GitHub / GitLab / Bitbucket / CodeBuild metadata, recent commits, ECS rollout history, and pipeline links
 
 **Preview:** open [`examples/ecs_report.sample.html`](examples/ecs_report.sample.html) in a browser (sample data, no credentials needed).
 

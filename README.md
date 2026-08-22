@@ -407,9 +407,122 @@ When an identifier can be parsed the tool **describes** the resource via a read-
 
 ## CI/CD deployments (GitHub, GitLab, Bitbucket)
 
-The HTML report **CI/CD** tab tracks what shipped each service and how the ECS rollout is going.
+The HTML report **CI/CD** tab (and the CLI `CI/CD:` line) show **which pipeline shipped this revision** and **how the ECS rollout is going**.
 
-**Detected from the running task definition** (bake these into your image or task env at build time):
+### How to use it
+
+1. **Bake CI metadata into the task definition** when your pipeline registers a new revision (see examples below).
+2. **Deploy** that task definition to ECS as usual.
+3. **Run the doctor** and open the HTML report:
+
+```bash
+python ecs_doctor.py -c my-cluster --all-services --html
+# open ecs_report.html → cluster tab "CI/CD"
+```
+
+Or check one service from the CLI:
+
+```bash
+python ecs_doctor.py -c my-cluster -s my-api --verbose
+```
+
+You should see something like:
+
+```
+  Deployment: finished
+  CI/CD: GitHub Actions · acme/orders-api · branch main · commit a1b2c3d · build #1842 · ECS COMPLETED · orders-api:42
+  Pipeline: https://github.com/acme/orders-api/actions/runs/18420123456
+```
+
+If no CI signals are present, ECS deployment history still shows; the tab explains which env vars to add.
+
+### Step 1 — pass CI env vars into the ECS task definition
+
+ecs-service-doctor reads **container environment** (and OCI labels) on the **running** task definition. Your pipeline must set those when it calls `aws ecs register-task-definition` (or your IaC / CDK / Terraform equivalent).
+
+**GitHub Actions** — example deploy job fragment:
+
+```yaml
+- name: Register task definition with CI metadata
+  env:
+    IMAGE: ${{ steps.build.outputs.image }}
+  run: |
+    # start from your base task definition JSON, then inject:
+    jq \
+      --arg sha "${{ github.sha }}" \
+      --arg ref "${{ github.ref_name }}" \
+      --arg repo "${{ github.repository }}" \
+      --arg run_id "${{ github.run_id }}" \
+      --arg run_number "${{ github.run_number }}" \
+      '
+      .containerDefinitions[0].environment += [
+        {"name":"GITHUB_ACTIONS","value":"true"},
+        {"name":"GITHUB_SHA","value":$sha},
+        {"name":"GITHUB_REF_NAME","value":$ref},
+        {"name":"GITHUB_REPOSITORY","value":$repo},
+        {"name":"GITHUB_RUN_ID","value":$run_id},
+        {"name":"GITHUB_RUN_NUMBER","value":$run_number}
+      ]
+      ' task-definition.json > task-definition.ci.json
+
+    aws ecs register-task-definition --cli-input-json file://task-definition.ci.json
+    aws ecs update-service --cluster my-cluster --service my-api \
+      --task-definition my-api --force-new-deployment
+```
+
+**GitLab CI** — same idea with GitLab predefined variables:
+
+```yaml
+deploy:
+  script:
+    - |
+      jq \
+        --arg sha "$CI_COMMIT_SHA" \
+        --arg ref "$CI_COMMIT_REF_NAME" \
+        --arg path "$CI_PROJECT_PATH" \
+        --arg pipe "$CI_PIPELINE_ID" \
+        --arg url "$CI_PIPELINE_URL" \
+        '
+        .containerDefinitions[0].environment += [
+          {"name":"GITLAB_CI","value":"true"},
+          {"name":"CI_COMMIT_SHA","value":$sha},
+          {"name":"CI_COMMIT_REF_NAME","value":$ref},
+          {"name":"CI_PROJECT_PATH","value":$path},
+          {"name":"CI_PIPELINE_ID","value":$pipe},
+          {"name":"CI_PIPELINE_URL","value":$url}
+        ]
+        ' task-definition.json > task-definition.ci.json
+      aws ecs register-task-definition --cli-input-json file://task-definition.ci.json
+      aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+        --task-definition "$ECS_SERVICE" --force-new-deployment
+```
+
+**Bitbucket Pipelines**:
+
+```yaml
+- step:
+    name: Deploy to ECS
+    script:
+      - |
+        jq \
+          --arg sha "$BITBUCKET_COMMIT" \
+          --arg branch "$BITBUCKET_BRANCH" \
+          --arg repo "$BITBUCKET_REPO_FULL_NAME" \
+          --arg build "$BITBUCKET_BUILD_NUMBER" \
+          '
+          .containerDefinitions[0].environment += [
+            {"name":"BITBUCKET_COMMIT","value":$sha},
+            {"name":"BITBUCKET_BRANCH","value":$branch},
+            {"name":"BITBUCKET_REPO_FULL_NAME","value":$repo},
+            {"name":"BITBUCKET_BUILD_NUMBER","value":$build}
+          ]
+          ' task-definition.json > task-definition.ci.json
+        aws ecs register-task-definition --cli-input-json file://task-definition.ci.json
+        aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE \
+          --task-definition $ECS_SERVICE --force-new-deployment
+```
+
+Minimum useful set per provider:
 
 | Provider | Signals |
 |----------|---------|
@@ -419,21 +532,30 @@ The HTML report **CI/CD** tab tracks what shipped each service and how the ECS r
 | **AWS CodeBuild** | `CODEBUILD_BUILD_ID`, `CODEBUILD_SOURCE_REPO_URL`, `CODEBUILD_RESOLVED_SOURCE_VERSION` |
 | **CircleCI / Jenkins** | `CIRCLE_BUILD_URL`, `BUILD_URL`, `GIT_COMMIT`, `GIT_BRANCH` |
 
-Also reads OCI labels such as `org.opencontainers.image.source` / `revision`, and git-SHA image tags.
+Also accepted: OCI labels `org.opencontainers.image.source` / `revision`, and image tags that look like a git SHA.
 
-For each service the tab shows:
+### Step 2 — view deployments in the report
+
+For each service the **CI/CD** tab shows:
 
 - Provider, repository, branch, commit, build/pipeline number
 - Link to the pipeline run when a URL can be built
 - ECS deployment history (PRIMARY / ACTIVE, rollout state, task definition, task counts)
 
-**Optional live status** (read-only HTTP APIs — never required):
+### Optional — live pipeline status
+
+Without extra tokens, metadata from the task definition is enough. To also **probe** the latest run status:
 
 | Token | Used for |
 |-------|----------|
 | `GITHUB_TOKEN` / `GH_TOKEN` or config `checks.github_token` | GitHub Actions run / commit status |
 | `GITLAB_TOKEN` or `checks.gitlab_token` | GitLab pipeline status |
 | `BITBUCKET_USERNAME` + `BITBUCKET_TOKEN` (or app password) | Bitbucket pipeline status |
+
+```bash
+export GITHUB_TOKEN=ghp_...   # or GITLAB_TOKEN / BITBUCKET_* 
+python ecs_doctor.py -c my-cluster --all-services --html
+```
 
 ```json
 {
@@ -447,7 +569,7 @@ For each service the tab shows:
 }
 ```
 
-Missing tokens only skip the live probe — CI metadata from the task definition still appears.
+Set `include_cicd` to `false` to skip. Missing tokens only skip the live probe — CI metadata from the task definition still appears.
 
 ---
 

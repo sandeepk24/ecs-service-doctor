@@ -541,6 +541,83 @@ def evaluate_cpu_memory(
     }
 
 
+LOG_ERROR_RE = re.compile(
+    r"\b(error|exception|fatal|fail(?:ed|ure)?|panic|critical|denied|refused)\b",
+    re.I,
+)
+LOG_WARN_RE = re.compile(
+    r"\b(warn(?:ing)?|deprecated|timeout|503|502|504|429)\b",
+    re.I,
+)
+LOG_SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2}
+
+
+def classify_log_severity(message: str) -> str:
+    text = message or ""
+    if LOG_ERROR_RE.search(text):
+        return "error"
+    if LOG_WARN_RE.search(text):
+        return "warning"
+    return "info"
+
+
+def _log_event_sort_key(item: Dict[str, Any]) -> Tuple[int, float]:
+    severity = LOG_SEVERITY_RANK.get(item.get("severity") or "info", 2)
+    stamp = item.get("timestamp") or ""
+    try:
+        ts = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        ts = 0.0
+    return severity, -ts
+
+
+def enrich_log_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for event in events:
+        item = dict(event)
+        item["severity"] = classify_log_severity(item.get("message") or "")
+        enriched.append(item)
+    enriched.sort(key=_log_event_sort_key)
+    return enriched
+
+
+def summarize_log_events(events: List[Dict[str, Any]]) -> Dict[str, int]:
+    errors = sum(1 for event in events if event.get("severity") == "error")
+    warnings = sum(1 for event in events if event.get("severity") == "warning")
+    info = sum(1 for event in events if event.get("severity") == "info")
+    return {
+        "errors": errors,
+        "warnings": warnings,
+        "info": info,
+        "total": len(events),
+    }
+
+
+def leadership_log_headline(summary: Dict[str, int], lookback_minutes: int) -> str:
+    errors = summary.get("errors", 0)
+    warnings = summary.get("warnings", 0)
+    total = summary.get("total", 0)
+    if errors and warnings:
+        lead = f"{errors} error(s) and {warnings} warning(s)"
+    elif errors:
+        lead = f"{errors} error(s)"
+    elif warnings:
+        lead = f"{warnings} warning(s)"
+    elif total:
+        lead = f"{total} routine log line(s)"
+    else:
+        lead = "No recent log lines"
+    return f"{lead} in the last {lookback_minutes} min"
+
+
+def logs_check_status(summary: Dict[str, int]) -> str:
+    if summary.get("errors", 0) > 0:
+        return STATUS_WARN
+    if summary.get("warnings", 0) > 0:
+        return STATUS_WARN
+    return STATUS_PASS
+
+
 def awslogs_targets(task_definition: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
     targets: List[Dict[str, str]] = []
     if not task_definition:
@@ -628,25 +705,28 @@ def evaluate_service_logs(
                 }
             )
 
-    collected.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
-    collected = collected[:limit]
+    collected = enrich_log_events(collected)[:limit]
+    summary = summarize_log_events(collected)
     if errors and not collected:
         return {
             "status": STATUS_WARN,
             "message": "; ".join(errors[:3]),
             "log_groups": groups,
             "events": [],
+            "summary": summary,
             "errors": errors[:8],
             "lookback_minutes": lookback_minutes,
         }
-    message = f"{len(collected)} log line(s) from {', '.join(groups)}"
+    headline = leadership_log_headline(summary, lookback_minutes)
+    message = f"{headline} · {', '.join(groups)}"
     if errors:
         message += f" · {len(errors)} stream error(s)"
     return {
-        "status": STATUS_PASS,
+        "status": logs_check_status(summary),
         "message": message,
         "log_groups": groups,
         "events": collected,
+        "summary": summary,
         "errors": errors[:8],
         "lookback_minutes": lookback_minutes,
     }

@@ -9,3 +9,5 @@ node_modules/
 report-ui/dist/
 *.log
 .DS_Store
+logs/*
+!logs/README.md

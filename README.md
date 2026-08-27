@@ -28,7 +28,7 @@ No config file required for a single check.
 
 ## Features
 
-Everything included today (**v0.11.2**):
+Everything included today (**v0.11.3**):
 
 ### Application health checks
 
@@ -118,6 +118,7 @@ Infers databases, queues, and AI services from the running task definition and o
 | **`--verbose`** | Full technical detail including rollback commands and event lists |
 | **`--json`** | Machine-readable report for CI/CD pipelines and automation |
 | **`--html`** | Self-contained **ECS Service Health Report** (no external assets) |
+| **`--dump-logs`** | Write per-service CloudWatch logs under `logs/` for offline triage |
 
 ### CI/CD and safety
 
@@ -195,6 +196,7 @@ python ecs_doctor.py -c my-cluster -s my-api \
 | `--account 123456789012` | Refuse to run in the wrong account |
 | `--verbose` | Detailed technical output |
 | `--html [FILE]` | Write HTML report (default: `ecs_report.html`) |
+| `--dump-logs [DIR]` | Write per-service CloudWatch logs for triage (default: `logs/`) |
 | `--json` | Machine-readable output for pipelines |
 | `--interval 10m` | Continuous checks (`30s`, `10m`, `1h`) |
 | `--health-url URL` | HTTP check URL (overrides auto-detect) |
@@ -386,6 +388,24 @@ Service tiles show a **Restarted N×** chip. Hover for the latest reason; open t
 ```
 
 Set `include_logs` or `include_restarts` to `false` to skip. Restarts do not affect the overall service health score.
+
+### Dump logs to a folder for triage
+
+Write every checked service’s CloudWatch lines (and restart reasons) under `logs/` for offline debugging:
+
+```bash
+python ecs_doctor.py -c my-cluster --all-services --dump-logs
+```
+
+Layout:
+
+```
+logs/
+  SUMMARY.md              # which services have errors/warnings
+  <cluster>/<service>.log # errors first, then warnings, then routine
+```
+
+`--dump-logs` fetches up to **200** lines per service by default (override with `checks.log_line_limit`). Pass a path to write elsewhere: `--dump-logs /tmp/ecs-triage`. See [`logs/README.md`](logs/README.md).
 
 ---
 

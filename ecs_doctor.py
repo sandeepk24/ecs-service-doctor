@@ -64,7 +64,9 @@ from topology import (
 )
 
 
-VERSION = "0.11.2"
+VERSION = "0.11.3"
+DEFAULT_LOGS_DUMP_DIR = "logs"
+DEFAULT_LOGS_DUMP_LINE_LIMIT = 200
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
@@ -4395,6 +4397,14 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
     if getattr(args, "notify_on_warn", False):
         notifications["on_warn"] = True
 
+    dump_logs = getattr(args, "dump_logs", None)
+    if dump_logs:
+        checks["include_logs"] = True
+        # Triage dumps need more lines than the HTML report default.
+        current_limit = int(checks.get("log_line_limit", 40) or 40)
+        if current_limit < DEFAULT_LOGS_DUMP_LINE_LIMIT:
+            checks["log_line_limit"] = DEFAULT_LOGS_DUMP_LINE_LIMIT
+
     return config
 
 
@@ -4409,6 +4419,13 @@ def run_once(
     if args.html:
         write_html_report(report, args.html)
         print(f"HTML report saved to {args.html}")
+
+    if getattr(args, "dump_logs", None):
+        dump = write_logs_dump(report, args.dump_logs)
+        print(
+            f"Service logs saved to {dump['directory']} "
+            f"({dump['service_count']} file(s); see {dump['summary']})"
+        )
 
     if args.json:
         print(json.dumps(report, indent=2, default=str))
@@ -4467,6 +4484,168 @@ def write_html_report(report: Dict[str, Any], path: str) -> None:
         file.write(content)
 
 
+def _safe_path_segment(value: str) -> str:
+    cleaned = re.sub(r"[^\w.\-]+", "_", value or "unknown").strip("._")
+    return cleaned or "unknown"
+
+
+def _format_restart_block(restarts: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(restarts, dict):
+        return []
+    stops = restarts.get("stops") or []
+    if not stops:
+        return []
+    lines = [
+        "## Restarts",
+        f"# {restarts.get('message') or f'{len(stops)} stop(s)'}",
+        "",
+    ]
+    for stop in stops:
+        stamp = stop.get("stopped_at") or "—"
+        reason = stop.get("stopped_reason") or "Task stopped"
+        container = stop.get("container") or ""
+        exit_code = stop.get("exit_code")
+        container_reason = stop.get("container_reason") or ""
+        bits = [f"[{stamp}] {reason}"]
+        if container or exit_code is not None:
+            extra = " · ".join(
+                part
+                for part in [
+                    container or None,
+                    f"exit {exit_code}" if exit_code is not None else None,
+                ]
+                if part
+            )
+            if extra:
+                bits.append(f"({extra})")
+        lines.append(" ".join(bits))
+        if container_reason and container_reason != reason:
+            lines.append(f"  container: {container_reason}")
+    lines.append("")
+    return lines
+
+
+def format_service_log_dump(
+    item: Dict[str, Any],
+    *,
+    generated_at: str,
+) -> str:
+    cluster = item.get("cluster") or "unknown"
+    service = item.get("service") or "unknown"
+    checks = item.get("checks") or {}
+    logs = checks.get("logs") if isinstance(checks.get("logs"), dict) else {}
+    events = list(logs.get("events") or [])
+    summary = logs.get("summary") or summarize_log_events(enrich_log_events(events))
+    lookback = logs.get("lookback_minutes")
+    groups = logs.get("log_groups") or []
+    stream_errors = logs.get("errors") or []
+
+    header = [
+        f"# ecs-service-doctor log dump · {VERSION}",
+        f"# cluster: {cluster}",
+        f"# service: {service}",
+        f"# service_status: {item.get('status')}",
+        f"# generated_at: {generated_at}",
+    ]
+    if lookback is not None:
+        header.append(f"# lookback_minutes: {lookback}")
+    if groups:
+        header.append(f"# log_groups: {', '.join(groups)}")
+    header.append(
+        "# summary: "
+        f"{summary.get('errors', 0)} error(s), "
+        f"{summary.get('warnings', 0)} warning(s), "
+        f"{summary.get('info', 0)} routine · "
+        f"{summary.get('total', len(events))} line(s)"
+    )
+    if logs.get("message"):
+        header.append(f"# message: {logs['message']}")
+    if stream_errors:
+        header.append(f"# stream_errors: {'; '.join(stream_errors[:5])}")
+    header.append("")
+
+    body: List[str] = []
+    body.extend(_format_restart_block(checks.get("restarts")))
+
+    body.append("## Log lines (errors and warnings first)")
+    body.append("")
+    if not events:
+        body.append(
+            logs.get("message")
+            or "No recent CloudWatch log lines for this service."
+        )
+        body.append("")
+    else:
+        for event in enrich_log_events(events):
+            severity = (event.get("severity") or "info").upper()
+            stamp = event.get("timestamp") or "—"
+            container = event.get("container") or ""
+            stream = event.get("stream") or ""
+            message = (event.get("message") or "").rstrip()
+            prefix = f"[{severity}] {stamp}"
+            if container:
+                prefix += f" · {container}"
+            if stream:
+                prefix += f" · {stream}"
+            body.append(f"{prefix}")
+            body.append(message)
+            body.append("")
+
+    return "\n".join(header + body).rstrip() + "\n"
+
+
+def write_logs_dump(report: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
+    """Write per-service CloudWatch logs under out_dir for offline triage."""
+    root = Path(out_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    generated_at = report.get("generated_at") or utc_now()
+    written: List[str] = []
+    summary_lines = [
+        f"# ecs-service-doctor logs dump · {VERSION}",
+        f"Generated: {generated_at}",
+        f"Region: {report.get('region')}",
+        "",
+        "| Cluster | Service | Status | Errors | Warnings | Lines | File |",
+        "|---------|---------|--------|--------|----------|-------|------|",
+    ]
+
+    for item in report.get("results") or []:
+        cluster = str(item.get("cluster") or "unknown")
+        service = str(item.get("service") or "unknown")
+        cluster_dir = root / _safe_path_segment(cluster)
+        cluster_dir.mkdir(parents=True, exist_ok=True)
+        rel_path = Path(_safe_path_segment(cluster)) / f"{_safe_path_segment(service)}.log"
+        abs_path = root / rel_path
+        abs_path.write_text(
+            format_service_log_dump(item, generated_at=generated_at),
+            encoding="utf-8",
+        )
+        written.append(str(rel_path))
+
+        logs = (item.get("checks") or {}).get("logs") or {}
+        summary = logs.get("summary") or {}
+        summary_lines.append(
+            "| {cluster} | {service} | {status} | {errors} | {warnings} | {total} | `{path}` |".format(
+                cluster=cluster,
+                service=service,
+                status=item.get("status") or "—",
+                errors=summary.get("errors", 0),
+                warnings=summary.get("warnings", 0),
+                total=summary.get("total", len(logs.get("events") or [])),
+                path=rel_path.as_posix(),
+            )
+        )
+
+    summary_path = root / "SUMMARY.md"
+    summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+    return {
+        "directory": str(root),
+        "files": written,
+        "summary": str(summary_path),
+        "service_count": len(written),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Check whether ECS services are truly healthy.",
@@ -4476,6 +4655,7 @@ Quick start (no config file):
   %(prog)s --cluster my-cluster --service my-api
   %(prog)s --cluster my-cluster --service api --service worker
   %(prog)s --cluster my-cluster --all-services
+  %(prog)s --cluster my-cluster --all-services --dump-logs
 
 Continuous monitoring with HTTP 200 alerts:
   %(prog)s --config config.json --interval 10m --notify-slack https://hooks.slack.com/...
@@ -4534,6 +4714,17 @@ With a config file:
         const="ecs_report.html",
         metavar="FILE",
         help="Write HTML report (default: ecs_report.html)",
+    )
+
+    parser.add_argument(
+        "--dump-logs",
+        nargs="?",
+        const=DEFAULT_LOGS_DUMP_DIR,
+        metavar="DIR",
+        help=(
+            "Write per-service CloudWatch logs for triage "
+            f"(default directory: {DEFAULT_LOGS_DUMP_DIR}/)"
+        ),
     )
 
     parser.add_argument(
